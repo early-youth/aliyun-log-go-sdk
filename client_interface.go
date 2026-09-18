@@ -1,6 +1,7 @@
 package sls
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -80,6 +81,21 @@ func CreateTokenAutoUpdateClient(endpoint string, tokenUpdateFunc UpdateTokenFun
 
 // ClientInterface for all log's open api
 type ClientInterface interface {
+	// GraphStore management APIs return logical schemas and do not poll lifecycle completion.
+	CreateGraphStore(project string, req *CreateGraphStoreRequest) error
+	GetGraphStore(project, graphStore string) (*GraphStore, error)
+	ListGraphStores(project string, req *ListGraphStoresRequest) (*ListGraphStoresResponse, error)
+	DeleteGraphStore(project, graphStore string) error
+	SplitGraphStoreShard(project, graphStore string, shardID int32, splitHash *uint64) error
+	GetGraphStoreBaseSchema(project, graphStore string) (*GetGraphStoreBaseSchemaResponse, error)
+	CreateGraphStoreCollectionSchema(project, graphStore string, schema json.RawMessage) error
+	GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (*GetGraphStoreCollectionSchemaResponse, error)
+	ListGraphStoreCollectionSchemas(project, graphStore string, pageSize int, pageToken string) (*ListGraphStoreCollectionSchemasResponse, error)
+	UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64, schema json.RawMessage) error
+	DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) error
+	// GraphStore data APIs use the existing LogStore compression and retry policy.
+	PostGraphStoreData(project, graphStore string, req *PostGraphStoreDataRequest) error
+	GetGraphStoreData(project, graphStore string, req *GetGraphStoreDataRequest) (*GetGraphStoreDataResponse, error)
 	// SetUserAgent set userAgent for sls client
 	SetUserAgent(userAgent string)
 	// SetHTTPClient set a custom http client, all request will send to sls by this client

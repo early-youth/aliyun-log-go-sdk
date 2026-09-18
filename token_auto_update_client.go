@@ -1,6 +1,7 @@
 package sls
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -27,6 +28,136 @@ type TokenAutoUpdateClient struct {
 }
 
 var errSTSFetchHighFrequency = errors.New("sts token fetch frequency is too high")
+
+func (c *TokenAutoUpdateClient) PostGraphStoreData(project, graphStore string, req *PostGraphStoreDataRequest) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.PostGraphStoreData(project, graphStore, req)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) GetGraphStoreData(project, graphStore string, req *GetGraphStoreDataRequest) (result *GetGraphStoreDataResponse, err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		result, err = c.logClient.GetGraphStoreData(project, graphStore, req)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) CreateGraphStore(project string, req *CreateGraphStoreRequest) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.CreateGraphStore(project, req)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) GetGraphStore(project, graphStore string) (result *GraphStore, err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		result, err = c.logClient.GetGraphStore(project, graphStore)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) ListGraphStores(project string, req *ListGraphStoresRequest) (result *ListGraphStoresResponse, err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		result, err = c.logClient.ListGraphStores(project, req)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) DeleteGraphStore(project, graphStore string) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.DeleteGraphStore(project, graphStore)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) SplitGraphStoreShard(project, graphStore string, shardID int32, splitHash *uint64) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.SplitGraphStoreShard(project, graphStore, shardID, splitHash)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) GetGraphStoreBaseSchema(project, graphStore string) (result *GetGraphStoreBaseSchemaResponse, err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		result, err = c.logClient.GetGraphStoreBaseSchema(project, graphStore)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) CreateGraphStoreCollectionSchema(project, graphStore string, schema json.RawMessage) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.CreateGraphStoreCollectionSchema(project, graphStore, schema)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (result *GetGraphStoreCollectionSchemaResponse, err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		result, err = c.logClient.GetGraphStoreCollectionSchema(project, graphStore, collectionSchemaID)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) ListGraphStoreCollectionSchemas(project, graphStore string, pageSize int, pageToken string) (result *ListGraphStoreCollectionSchemasResponse, err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		result, err = c.logClient.ListGraphStoreCollectionSchemas(project, graphStore, pageSize, pageToken)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64, schema json.RawMessage) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.UpdateGraphStoreCollectionSchema(project, graphStore, collectionSchemaID, schema)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
+func (c *TokenAutoUpdateClient) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.DeleteGraphStoreCollectionSchema(project, graphStore, collectionSchemaID)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
 
 func (c *TokenAutoUpdateClient) flushSTSToken() {
 	for {
