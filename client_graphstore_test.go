@@ -89,10 +89,10 @@ func TestGraphStoreManagementRequests(t *testing.T) {
 			require.NoError(t, client.CreateGraphStoreCollectionSchema("project", "store", json.RawMessage(`{"name":"雪"}`)))
 			check(http.MethodPost, "/graphstore/store/collectionschemas")
 			require.JSONEq(t, `{"value":{"name":"雪"}}`, string(requestBody))
-			require.NoError(t, client.UpdateGraphStoreCollectionSchema("project", "store", math.MaxInt64, json.RawMessage(`{"fields":[]}`)))
+			require.NoError(t, client.UpdateGraphStoreCollectionSchema("project", "store", "9223372036854775807", json.RawMessage(`{"name":"9223372036854775807","fields":[]}`)))
 			check(http.MethodPut, "/graphstore/store/collectionschemas/9223372036854775807")
-			require.JSONEq(t, `{"value":{"fields":[]}}`, string(requestBody))
-			require.NoError(t, client.DeleteGraphStoreCollectionSchema("project", "store", math.MaxInt64))
+			require.JSONEq(t, `{"value":{"name":"9223372036854775807","fields":[]}}`, string(requestBody))
+			require.NoError(t, client.DeleteGraphStoreCollectionSchema("project", "store", "9223372036854775807"))
 			check(http.MethodDelete, "/graphstore/store/collectionschemas/9223372036854775807")
 			require.NoError(t, client.DeleteGraphStore("project", "store"))
 			check(http.MethodDelete, "/graphstore/store")
@@ -124,9 +124,9 @@ func TestGraphStoreManagementRequests(t *testing.T) {
 			check(http.MethodGet, "/graphstore/store/baseschema")
 			require.Equal(t, int64(math.MaxInt64), base.StoreID)
 			require.Contains(t, string(base.BaseSchema), "9223372036854775807")
-			schema := `{"collectionSchemaId":9223372036854775807,"unknown":"opaque"}`
+			schema := `{"name":"9223372036854775807","unknown":"opaque"}`
 			responseBody = `{"projectId":1,"storeName":"store","collectionSchema":` + schema + "}"
-			collection, err := client.GetGraphStoreCollectionSchema("project", "store", math.MaxInt64)
+			collection, err := client.GetGraphStoreCollectionSchema("project", "store", "9223372036854775807")
 			require.NoError(t, err)
 			check(http.MethodGet, "/graphstore/store/collectionschemas/9223372036854775807")
 			require.Equal(t, schema, string(collection.CollectionSchema))
@@ -154,10 +154,16 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 	client := CreateNormalInterface("example.com", "key", "secret", "")
 	transport := testutil.NewMockTransport()
 	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, name := range []string{"", "../other", "a/b", "a%2fb", "a?x=y", "a#b", "雪", "a\x00b"} {
+		_, err := client.GetGraphStoreCollectionSchema("project", "store", name)
+		require.Error(t, err)
+		require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", name, json.RawMessage(`{}`)))
+		require.Error(t, client.DeleteGraphStoreCollectionSchema("project", "store", name))
+	}
 	for _, schema := range []string{"", "null", "[]", `"{}"`, "{} {}", "{}\x00tail", "{bad}", "{\"x\":\"\xff\"}"} {
 		require.Error(t, client.CreateGraphStore("project", &CreateGraphStoreRequest{BaseSchema: json.RawMessage(schema)}))
 		require.Error(t, client.CreateGraphStoreCollectionSchema("project", "store", json.RawMessage(schema)))
-		require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", 1, json.RawMessage(schema)))
+		require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", "aa", json.RawMessage(schema)))
 	}
 	require.Error(t, client.CreateGraphStore("project", nil))
 	require.Error(t, client.DeleteGraphStore("project", "../logstores/store"))
@@ -176,7 +182,9 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 	}
 	for _, id := range []string{"null", "1.5", `"42"`, "9223372036854775808"} {
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","storeId":`+id+`,"baseSchema":{}}`), &GetGraphStoreBaseSchemaResponse{}))
-		schema := `{"collectionSchemaId":` + id + "}"
+	}
+	for _, name := range []string{"null", "1.5", "42", `""`, "[]", "{}"} {
+		schema := `{"name":` + name + "}"
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","collectionSchema":`+schema+"}"), &GetGraphStoreCollectionSchemaResponse{}))
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","collectionSchemas":[`+schema+"]}"), &ListGraphStoreCollectionSchemasResponse{}))
 	}
@@ -191,6 +199,29 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 	require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","collectionSchemas":[],"nextPageToken":null}`), &ListGraphStoreCollectionSchemasResponse{}))
 	require.Error(t, json.Unmarshal([]byte(`{"projectId":1.0,"storeName":"s","state":"READY","currentShardCount":1}`), &GraphStore{}))
 	require.Error(t, json.Unmarshal([]byte(`{"projectId":2147483648,"storeName":"s","state":"READY","currentShardCount":1}`), &GraphStore{}))
+}
+
+func TestGraphStoreCollectionNamesStayOpaque(t *testing.T) {
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, name := range []string{"12", "1a", "aa", strings.Repeat("a", 63), "a", strings.Repeat("a", 64)} {
+		// Configurable length/name rules belong to the service, not the SDK.
+		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+			require.Equal(t, "/graphstore/store/collectionschemas/"+name, req.URL.Path)
+			body := ""
+			if req.Method == http.MethodGet {
+				body = `{"projectId":1,"storeName":"store","collectionSchema":{"name":"` + name + `"}}`
+			}
+			return httpmock.NewStringResponse(200, body), nil
+		})
+		result, err := client.GetGraphStoreCollectionSchema("project", "store", name)
+		require.NoError(t, err)
+		require.NotContains(t, string(result.CollectionSchema), "collectionSchemaId")
+		require.NoError(t, client.UpdateGraphStoreCollectionSchema("project", "store", name,
+			json.RawMessage(`{"name":"`+name+`","fields":[]}`)))
+		require.NoError(t, client.DeleteGraphStoreCollectionSchema("project", "store", name))
+	}
 }
 
 func TestGraphStoreErrorsAndTokenRefresh(t *testing.T) {

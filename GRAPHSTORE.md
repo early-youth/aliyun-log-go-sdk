@@ -17,7 +17,14 @@ _ = page.CollectionSchemas
 CreateGraphStore takes *CreateGraphStoreRequest (StoreName, ShardCount, BaseSchema).
 Schemas are complete logical object values in json.RawMessage; Create/UpdateCollectionSchema
 wrap them as a JSON object, never as an escaped string. Returned schemas stay opaque RawMessage.
-IDs are int64; SplitGraphStoreShard's *uint64 distinguishes nil from a pointer to zero.
+Collection Get/Update/Delete take collectionSchemaName string, not an ID; numeric-looking
+names remain strings. Get/List schemas require name and have no added ID. Update values
+must include the same name as the path; the service enforces immutable name/layout/keys.
+Collection pages use raw last-name tokens with byte ordering, default size 100/max 1000;
+the SDK passes tokens through without interpretation. The service owns configurable name
+validation (default lowercase/digits/interior '-'/'_', length 2..63), uniqueness and the
+10240 logical-schema create quota. SDK path validation only prevents unsafe path segments.
+StoreID stays int64; SplitGraphStoreShard's *uint64 distinguishes nil from a pointer to zero.
 ListGraphStores accepts optional *int Offset/Size; collection pageSize 0 omits the parameter.
 
 Mutations return error only. A service *sls.Error retains HTTPCode and RequestID.

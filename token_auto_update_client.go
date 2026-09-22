@@ -119,9 +119,9 @@ func (c *TokenAutoUpdateClient) CreateGraphStoreCollectionSchema(project, graphS
 	return
 }
 
-func (c *TokenAutoUpdateClient) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (result *GetGraphStoreCollectionSchemaResponse, err error) {
+func (c *TokenAutoUpdateClient) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (result *GetGraphStoreCollectionSchemaResponse, err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
-		result, err = c.logClient.GetGraphStoreCollectionSchema(project, graphStore, collectionSchemaID)
+		result, err = c.logClient.GetGraphStoreCollectionSchema(project, graphStore, collectionSchemaName)
 		if !c.processError(err) {
 			return
 		}
@@ -139,9 +139,9 @@ func (c *TokenAutoUpdateClient) ListGraphStoreCollectionSchemas(project, graphSt
 	return
 }
 
-func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64, schema json.RawMessage) (err error) {
+func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema json.RawMessage) (err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
-		err = c.logClient.UpdateGraphStoreCollectionSchema(project, graphStore, collectionSchemaID, schema)
+		err = c.logClient.UpdateGraphStoreCollectionSchema(project, graphStore, collectionSchemaName, schema)
 		if !c.processError(err) {
 			return
 		}
@@ -149,9 +149,9 @@ func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphS
 	return
 }
 
-func (c *TokenAutoUpdateClient) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (err error) {
+func (c *TokenAutoUpdateClient) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
-		err = c.logClient.DeleteGraphStoreCollectionSchema(project, graphStore, collectionSchemaID)
+		err = c.logClient.DeleteGraphStoreCollectionSchema(project, graphStore, collectionSchemaName)
 		if !c.processError(err) {
 			return
 		}

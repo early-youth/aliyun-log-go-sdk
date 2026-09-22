@@ -18,29 +18,29 @@ import (
 )
 
 type invocation struct {
-	Action             string          `json:"action"`
-	Endpoint           string          `json:"endpoint"`
-	DialAddress        string          `json:"dial_address"`
-	Project            string          `json:"project"`
-	StoreName          string          `json:"store_name"`
-	TimeoutMS          int             `json:"timeout_ms"`
-	SignatureVersion   string          `json:"signature_version"`
-	Region             string          `json:"region"`
-	BadCredentials     bool            `json:"bad_credentials"`
-	Body               json.RawMessage `json:"body_json"`
-	Offset             *int            `json:"offset"`
-	Size               *int            `json:"size"`
-	PageSize           int             `json:"page_size"`
-	PageToken          string          `json:"page_token"`
-	CollectionSchemaID int64           `json:"collection_schema_id"`
-	ShardID            int32           `json:"shard_id"`
-	SplitHash          *uint64         `json:"split_hash"`
-	RequestBase64      string          `json:"request_base64"`
-	Compression        string          `json:"compression"`
-	Query              string          `json:"query"`
-	From               *uint32         `json:"from"`
-	To                 *uint32         `json:"to"`
-	Session            string          `json:"session"`
+	Action               string          `json:"action"`
+	Endpoint             string          `json:"endpoint"`
+	DialAddress          string          `json:"dial_address"`
+	Project              string          `json:"project"`
+	StoreName            string          `json:"store_name"`
+	TimeoutMS            int             `json:"timeout_ms"`
+	SignatureVersion     string          `json:"signature_version"`
+	Region               string          `json:"region"`
+	BadCredentials       bool            `json:"bad_credentials"`
+	Body                 json.RawMessage `json:"body_json"`
+	Offset               *int            `json:"offset"`
+	Size                 *int            `json:"size"`
+	PageSize             int             `json:"page_size"`
+	PageToken            string          `json:"page_token"`
+	CollectionSchemaName string          `json:"collection_schema_name"`
+	ShardID              int32           `json:"shard_id"`
+	SplitHash            *uint64         `json:"split_hash"`
+	RequestBase64        string          `json:"request_base64"`
+	Compression          string          `json:"compression"`
+	Query                string          `json:"query"`
+	From                 *uint32         `json:"from"`
+	To                   *uint32         `json:"to"`
+	Session              string          `json:"session"`
 }
 
 func main() {
@@ -113,13 +113,13 @@ func main() {
 	case "CreateGraphStoreCollectionSchema":
 		err = client.CreateGraphStoreCollectionSchema(p.Project, p.StoreName, p.Body)
 	case "GetGraphStoreCollectionSchema":
-		result, err = client.GetGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaID)
+		result, err = client.GetGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName)
 	case "ListGraphStoreCollectionSchemas":
 		result, err = client.ListGraphStoreCollectionSchemas(p.Project, p.StoreName, p.PageSize, p.PageToken)
 	case "UpdateGraphStoreCollectionSchema":
-		err = client.UpdateGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaID, p.Body)
+		err = client.UpdateGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName, p.Body)
 	case "DeleteGraphStoreCollectionSchema":
-		err = client.DeleteGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaID)
+		err = client.DeleteGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName)
 	default:
 		panic("unsupported GraphStore operation")
 	}

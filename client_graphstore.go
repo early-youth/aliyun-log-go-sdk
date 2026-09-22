@@ -152,8 +152,11 @@ func (r *GetGraphStoreBaseSchemaResponse) UnmarshalJSON(data []byte) error {
 }
 
 func checkGraphStoreCollection(schema json.RawMessage) error {
-	var id int64
-	_, err := decodeGraphStoreFields(schema, map[string]interface{}{"collectionSchemaId": &id})
+	var name string
+	_, err := decodeGraphStoreFields(schema, map[string]interface{}{"name": &name})
+	if err == nil && name == "" {
+		return fmt.Errorf("empty GraphStore collection name")
+	}
 	return err
 }
 
@@ -191,11 +194,18 @@ func (r *ListGraphStoreCollectionSchemasResponse) UnmarshalJSON(data []byte) err
 	return nil
 }
 
-func graphStorePath(name string) (string, error) {
+func graphStorePathSegment(name string) error {
 	if name == "" || strings.IndexFunc(name, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
 	}) >= 0 {
-		return "", fmt.Errorf("invalid GraphStore path segment")
+		return fmt.Errorf("invalid GraphStore path segment")
+	}
+	return nil
+}
+
+func graphStorePath(name string) (string, error) {
+	if err := graphStorePathSegment(name); err != nil {
+		return "", err
 	}
 	return "/graphstore/" + name, nil
 }
@@ -326,14 +336,17 @@ func (c *Client) CreateGraphStoreCollectionSchema(project, graphStore string, sc
 	return c.graphStoreRequest(project, http.MethodPost, uri+"/collectionschemas", nil, body, nil)
 }
 
-func (c *Client) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (*GetGraphStoreCollectionSchemaResponse, error) {
+func (c *Client) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (*GetGraphStoreCollectionSchemaResponse, error) {
+	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+		return nil, err
+	}
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
 		return nil, err
 	}
 	result := &GetGraphStoreCollectionSchemaResponse{}
 	if err := c.graphStoreRequest(project, http.MethodGet,
-		uri+"/collectionschemas/"+strconv.FormatInt(collectionSchemaID, 10), nil, nil, result); err != nil {
+		uri+"/collectionschemas/"+collectionSchemaName, nil, nil, result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -358,7 +371,10 @@ func (c *Client) ListGraphStoreCollectionSchemas(project, graphStore string, pag
 	return result, nil
 }
 
-func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64, schema json.RawMessage) error {
+func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema json.RawMessage) error {
+	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+		return err
+	}
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
 		return err
@@ -370,14 +386,17 @@ func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, co
 		Value json.RawMessage `json:"value"`
 	}{schema}
 	return c.graphStoreRequest(project, http.MethodPut,
-		uri+"/collectionschemas/"+strconv.FormatInt(collectionSchemaID, 10), nil, body, nil)
+		uri+"/collectionschemas/"+collectionSchemaName, nil, body, nil)
 }
 
-func (c *Client) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) error {
+func (c *Client) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) error {
+	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+		return err
+	}
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
 		return err
 	}
 	return c.graphStoreRequest(project, http.MethodDelete,
-		uri+"/collectionschemas/"+strconv.FormatInt(collectionSchemaID, 10), nil, nil, nil)
+		uri+"/collectionschemas/"+collectionSchemaName, nil, nil, nil)
 }

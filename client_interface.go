@@ -89,10 +89,10 @@ type ClientInterface interface {
 	SplitGraphStoreShard(project, graphStore string, shardID int32, splitHash *uint64) error
 	GetGraphStoreBaseSchema(project, graphStore string) (*GetGraphStoreBaseSchemaResponse, error)
 	CreateGraphStoreCollectionSchema(project, graphStore string, schema json.RawMessage) error
-	GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) (*GetGraphStoreCollectionSchemaResponse, error)
+	GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (*GetGraphStoreCollectionSchemaResponse, error)
 	ListGraphStoreCollectionSchemas(project, graphStore string, pageSize int, pageToken string) (*ListGraphStoreCollectionSchemasResponse, error)
-	UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64, schema json.RawMessage) error
-	DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaID int64) error
+	UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema json.RawMessage) error
+	DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) error
 	// GraphStore data APIs use the existing LogStore compression and retry policy.
 	PostGraphStoreData(project, graphStore string, req *PostGraphStoreDataRequest) error
 	GetGraphStoreData(project, graphStore string, req *GetGraphStoreDataRequest) (*GetGraphStoreDataResponse, error)
