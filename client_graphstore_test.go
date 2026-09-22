@@ -62,7 +62,7 @@ func TestGraphStoreManagementRequests(t *testing.T) {
 				}
 			}
 			require.NoError(t, client.CreateGraphStore("project", &CreateGraphStoreRequest{
-				StoreName: "store", InitialShardCount: 2,
+				StoreName: "store", ShardCount: 2,
 				BaseSchema: json.RawMessage(`{"unknown":"雪","id":9223372036854775807}`),
 			}))
 			check(http.MethodPost, "/graphstore")
@@ -97,13 +97,15 @@ func TestGraphStoreManagementRequests(t *testing.T) {
 			require.NoError(t, client.DeleteGraphStore("project", "store"))
 			check(http.MethodDelete, "/graphstore/store")
 
-			responseBody = `{"projectId":2147483647,"storeName":"store","state":"READY","currentShardCount":2}`
+			responseBody = `{"projectId":2147483647,"storeName":"store","state":"READY","currentShardCount":2,"shards":[{"shardId":2},{"shardId":7}]}`
 			store, err := client.GetGraphStore("project", "store")
 			require.NoError(t, err)
 			check(http.MethodGet, "/graphstore/store")
 			require.Equal(t, int32(math.MaxInt32), store.ProjectID)
 			require.Equal(t, int32(2), store.CurrentShardCount)
 			require.Equal(t, "READY", store.State)
+			require.Equal(t, []GraphStoreShardInfo{{ShardID: 2}, {ShardID: 7}}, store.Shards)
+			responseBody = `{"projectId":2147483647,"storeName":"store","state":"READY","currentShardCount":2}`
 			responseBody = `{"stores":[` + responseBody + `],"count":1,"total":9223372036854775807}`
 			offset, size := 0, 1
 			stores, err := client.ListGraphStores("project", &ListGraphStoresRequest{Offset: &offset, Size: &size})
@@ -145,6 +147,10 @@ func TestGraphStoreManagementRequests(t *testing.T) {
 }
 
 func TestGraphStoreInputAndResponseValidation(t *testing.T) {
+	for _, shards := range []string{"null", "{}", "[null]", "[{}]", "[{\"shardId\":2147483648}]", "[{\"shardId\":1},{\"shardId\":1}]", "[{\"shardId\":2},{\"shardId\":1}]", "[]"} {
+		var result GetGraphStoreResponse
+		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"store","state":"READY","currentShardCount":2,"shards":`+shards+`}`), &result))
+	}
 	client := CreateNormalInterface("example.com", "key", "secret", "")
 	transport := testutil.NewMockTransport()
 	client.SetHTTPClient(&http.Client{Transport: transport})
@@ -161,7 +167,7 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 0, transport.GetTotalCallCount())
 	for _, response := range []interface{}{
-		&GraphStore{}, &ListGraphStoresResponse{}, &GetGraphStoreBaseSchemaResponse{},
+		&GraphStore{}, &GetGraphStoreResponse{}, &ListGraphStoresResponse{}, &GetGraphStoreBaseSchemaResponse{},
 		&GetGraphStoreCollectionSchemaResponse{}, &ListGraphStoreCollectionSchemasResponse{},
 	} {
 		for _, body := range []string{"{}", "null", "[]", "{} {}", "{}\x00tail"} {

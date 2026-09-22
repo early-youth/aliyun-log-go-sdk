@@ -14,7 +14,7 @@ if err != nil { return err }
 _ = page.CollectionSchemas
 ```
 
-CreateGraphStore takes *CreateGraphStoreRequest (StoreName, InitialShardCount, BaseSchema).
+CreateGraphStore takes *CreateGraphStoreRequest (StoreName, ShardCount, BaseSchema).
 Schemas are complete logical object values in json.RawMessage; Create/UpdateCollectionSchema
 wrap them as a JSON object, never as an escaped string. Returned schemas stay opaque RawMessage.
 IDs are int64; SplitGraphStoreShard's *uint64 distinguishes nil from a pointer to zero.
@@ -39,9 +39,10 @@ err := client.PostGraphStoreData(project, storeName, &sls.PostGraphStoreDataRequ
 if err != nil { return err }
 rows, err := client.GetGraphStoreData(project, storeName, &sls.GetGraphStoreDataRequest{
     Query: "MATCH (n) RETURN n",
+    From: 1700000000, To: 1700001000, Session: "opaque",
 })
 if err != nil { return err }
-// rows.Header, rows.Data ([][]*string), rows.Meta and rows.RequestID.
+// rows.Data.Fields, rows.Data.Values ([][]*string), rows.Meta and rows.RequestID.
 // A nil cell is JSON null; a pointer to "" is an empty string.
 ```
 
@@ -54,8 +55,11 @@ credential refresh; retry timeout does not cancel an already-running HTTP reques
 An ACK does not imply query visibility or durability. Timeout results may be unknown and
 retrying can duplicate delivery. Callers own query convergence polling.
 
-Query sends only query JSON. All metadata counters are signed int64; cells stay string/null,
-including complex graph values. Missing, null or mistyped required fields, row count/width
+GetGraphStore returns ordered unique signed-int32 shards; List keeps summary items.
+Query requires uint32 From < To with [from,to) semantics and accepts an optional opaque Session.
+The public response has data.fields/values and only meta.truncated/elapsedMs/warnings;
+elapsedMs is signed int64. Cells stay string/null, including complex graph values.
+Old header/rowCount/peakMemoryBytes/resultBytes are not accepted. Missing, null or mistyped required fields, row width
 mismatches, invalid JSON/UTF-8 and bad compressed responses fail without partial rows or
 parser retries. Responses support uncompressed or LZ4 only, with raw size checked against
 256 MiB before LZ4 allocation. Existing LogStore response behavior is unchanged.

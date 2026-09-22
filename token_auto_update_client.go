@@ -59,7 +59,7 @@ func (c *TokenAutoUpdateClient) CreateGraphStore(project string, req *CreateGrap
 	return
 }
 
-func (c *TokenAutoUpdateClient) GetGraphStore(project, graphStore string) (result *GraphStore, err error) {
+func (c *TokenAutoUpdateClient) GetGraphStore(project, graphStore string) (result *GetGraphStoreResponse, err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
 		result, err = c.logClient.GetGraphStore(project, graphStore)
 		if !c.processError(err) {

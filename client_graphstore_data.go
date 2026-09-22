@@ -18,22 +18,26 @@ type PostGraphStoreDataRequest struct {
 }
 
 type GetGraphStoreDataRequest struct {
-	Query string `json:"query"`
+	Query   string `json:"query"`
+	From    uint32 `json:"from"`
+	To      uint32 `json:"to"`
+	Session string `json:"session,omitempty"`
 }
 
 type GraphStoreQueryMeta struct {
-	RowCount        int64    `json:"rowCount"`
-	ElapsedMs       int64    `json:"elapsedMs"`
-	PeakMemoryBytes int64    `json:"peakMemoryBytes"`
-	ResultBytes     int64    `json:"resultBytes"`
-	Truncated       bool     `json:"truncated"`
-	Warnings        []string `json:"warnings"`
+	ElapsedMs int64    `json:"elapsedMs"`
+	Truncated bool     `json:"truncated"`
+	Warnings  []string `json:"warnings"`
+}
+
+type GraphStoreQueryData struct {
+	Fields []string    `json:"fields"`
+	Values [][]*string `json:"values"`
 }
 
 type GetGraphStoreDataResponse struct {
 	RequestID string              `json:"-"`
-	Header    []string            `json:"header"`
-	Data      [][]*string         `json:"data"`
+	Data      GraphStoreQueryData `json:"data"`
 	Meta      GraphStoreQueryMeta `json:"meta"`
 }
 
@@ -97,8 +101,8 @@ func (c *Client) PostGraphStoreData(project, graphStore string, req *PostGraphSt
 
 // GetGraphStoreData returns a fully validated row result. Complex graph values stay strings.
 func (c *Client) GetGraphStoreData(project, graphStore string, req *GetGraphStoreDataRequest) (*GetGraphStoreDataResponse, error) {
-	if project == "" || req == nil || req.Query == "" {
-		return nil, NewClientError(fmt.Errorf("project and GraphStore query are required"))
+	if project == "" || req == nil || req.Query == "" || req.From >= req.To {
+		return nil, NewClientError(fmt.Errorf("project, GraphStore query and from < to are required"))
 	}
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
@@ -147,25 +151,37 @@ func (c *Client) GetGraphStoreData(project, graphStore string, req *GetGraphStor
 func decodeGraphStoreQuery(body []byte) (*GetGraphStoreDataResponse, error) {
 	result := &GetGraphStoreDataResponse{}
 	var header, warnings []*string
-	var meta json.RawMessage
-	if _, err := decodeGraphStoreFields(body, map[string]interface{}{
-		"header": &header, "data": &result.Data, "meta": &meta,
-	}); err != nil {
+	var data, meta json.RawMessage
+	fields, err := decodeGraphStoreFields(body, map[string]interface{}{"data": &data, "meta": &meta})
+	if err != nil {
 		return nil, err
 	}
-	if _, err := decodeGraphStoreFields(meta, map[string]interface{}{
-		"rowCount": &result.Meta.RowCount, "elapsedMs": &result.Meta.ElapsedMs,
-		"peakMemoryBytes": &result.Meta.PeakMemoryBytes, "resultBytes": &result.Meta.ResultBytes,
+	if len(fields) != 2 {
+		return nil, fmt.Errorf("invalid GraphStore query response fields")
+	}
+	fields, err = decodeGraphStoreFields(data, map[string]interface{}{"fields": &header, "values": &result.Data.Values})
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) != 2 {
+		return nil, fmt.Errorf("invalid GraphStore query data fields")
+	}
+	fields, err = decodeGraphStoreFields(meta, map[string]interface{}{
+		"elapsedMs": &result.Meta.ElapsedMs,
 		"truncated": &result.Meta.Truncated, "warnings": &warnings,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
-	result.Header = make([]string, len(header))
+	if len(fields) != 3 {
+		return nil, fmt.Errorf("invalid GraphStore query metadata fields")
+	}
+	result.Data.Fields = make([]string, len(header))
 	for i, column := range header {
 		if column == nil {
 			return nil, fmt.Errorf("GraphStore query header must contain strings")
 		}
-		result.Header[i] = *column
+		result.Data.Fields[i] = *column
 	}
 	result.Meta.Warnings = make([]string, len(warnings))
 	for i, warning := range warnings {
@@ -174,11 +190,8 @@ func decodeGraphStoreQuery(body []byte) (*GetGraphStoreDataResponse, error) {
 		}
 		result.Meta.Warnings[i] = *warning
 	}
-	if result.Meta.RowCount != int64(len(result.Data)) {
-		return nil, fmt.Errorf("GraphStore query row count mismatch")
-	}
-	for _, row := range result.Data {
-		if row == nil || len(row) != len(result.Header) {
+	for _, row := range result.Data.Values {
+		if row == nil || len(row) != len(result.Data.Fields) {
 			return nil, fmt.Errorf("invalid GraphStore query row")
 		}
 	}

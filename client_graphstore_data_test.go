@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const graphStoreRows = `{"header":["a","b","node"],"data":[[null,"","{\"id\":\"雪\"}"],["x\u0000y","雪","s"]],"meta":{"rowCount":2,"truncated":true,"elapsedMs":-9223372036854775808,"peakMemoryBytes":9223372036854775807,"resultBytes":123,"warnings":["","雪"]}}`
+const graphStoreRows = `{"data":{"fields":["a","b","node"],"values":[[null,"","{\"id\":\"雪\"}"],["x\u0000y","雪","s"]]},"meta":{"truncated":true,"elapsedMs":-9223372036854775808,"warnings":["","雪"]}}`
 
 func TestGraphStoreDataWire(t *testing.T) {
 	for _, version := range []AuthVersionType{AuthV1, AuthV4} {
@@ -91,7 +91,7 @@ func TestGraphStoreDataWire(t *testing.T) {
 						require.Equal(t, raw, decoded)
 					}
 				}
-				query := &GetGraphStoreDataRequest{Query: "RETURN '雪\\\"\n\x00'"}
+				query := &GetGraphStoreDataRequest{Query: "RETURN '雪\\\"\n\x00'", From: 0, To: 4294967295, Session: "opaque\x00session"}
 				result, err := client.GetGraphStoreData("project", "store", query)
 				require.NoError(t, err)
 				check("query", "application/json", len(sent))
@@ -100,12 +100,11 @@ func TestGraphStoreDataWire(t *testing.T) {
 				require.NoError(t, json.Unmarshal(sent, &actual))
 				require.Equal(t, *query, actual)
 				require.Equal(t, "data-request", result.RequestID)
-				require.Nil(t, result.Data[0][0])
-				require.Equal(t, "", *result.Data[0][1])
-				require.Equal(t, `{"id":"雪"}`, *result.Data[0][2])
-				require.Equal(t, "x\x00y", *result.Data[1][0])
+				require.Nil(t, result.Data.Values[0][0])
+				require.Equal(t, "", *result.Data.Values[0][1])
+				require.Equal(t, `{"id":"雪"}`, *result.Data.Values[0][2])
+				require.Equal(t, "x\x00y", *result.Data.Values[1][0])
 				require.Equal(t, int64(-9223372036854775808), result.Meta.ElapsedMs)
-				require.Equal(t, int64(9223372036854775807), result.Meta.PeakMemoryBytes)
 				require.Equal(t, []string{"", "雪"}, result.Meta.Warnings)
 				require.True(t, result.Meta.Truncated)
 			})
@@ -129,7 +128,7 @@ func TestGraphStoreDataInput(t *testing.T) {
 	require.Error(t, client.PostGraphStoreData("project", "store", nil))
 	for _, names := range [][2]string{{"", "store"}, {"project", ""}, {"project", "a/b"}, {"project", "a?b"}} {
 		require.Error(t, client.PostGraphStoreData(names[0], names[1], write))
-		result, err := client.GetGraphStoreData(names[0], names[1], &GetGraphStoreDataRequest{Query: "RETURN 1"})
+		result, err := client.GetGraphStoreData(names[0], names[1], &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
 		require.Error(t, err)
 		require.Nil(t, result)
 	}
@@ -159,7 +158,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 	query := func(valid bool) {
 		t.Helper()
 		before := transport.GetTotalCallCount()
-		result, err := client.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1"})
+		result, err := client.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
 		if valid {
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -177,17 +176,17 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 		query(false)
 	}
 	for _, replacement := range [][2]string{
-		{`"header":["a","b","node"]`, `"header":[null,"b","node"]`},
-		{`"header":["a","b","node"]`, `"header":[1,"b","node"]`},
+		{`"fields":["a","b","node"]`, `"fields":[null,"b","node"]`},
+		{`"fields":["a","b","node"]`, `"fields":[1,"b","node"]`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `null`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `[]`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `[1,"",""]`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `[{},"",""]`},
-		{`"rowCount":2`, `"rowCount":3`}, {`"rowCount":2`, `"rowCount":-1`},
-		{`"rowCount":2`, `"rowCount":2.0`}, {`"rowCount":2`, `"rowCount":"2"`},
 		{`"truncated":true`, `"truncated":1`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":-9223372036854775809`},
-		{`"peakMemoryBytes":9223372036854775807`, `"peakMemoryBytes":9223372036854775808`},
+		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":1.5`},
+		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":"1"`},
+		{`"truncated":true`, `"rowCount":2,"truncated":true`},
 		{`"warnings":["","雪"]`, `"warnings":[null]`},
 		{`"warnings":["","雪"]`, `"warnings":[false]`},
 	} {
@@ -195,13 +194,13 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 		require.NotEqual(t, graphStoreRows, body)
 		query(false)
 	}
-	for _, scope := range []string{"", "meta"} {
+	for _, scope := range []string{"", "meta", "data"} {
 		var outer map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal([]byte(graphStoreRows), &outer))
 		fields := outer
-		if scope == "meta" {
+		if scope != "" {
 			fields = nil
-			require.NoError(t, json.Unmarshal(outer["meta"], &fields))
+			require.NoError(t, json.Unmarshal(outer[scope], &fields))
 		}
 		for key, original := range fields {
 			for _, null := range []bool{true, false} {
@@ -210,8 +209,8 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 				} else {
 					delete(fields, key)
 				}
-				if scope == "meta" {
-					outer["meta"], _ = json.Marshal(fields)
+				if scope != "" {
+					outer[scope], _ = json.Marshal(fields)
 				}
 				encoded, err := json.Marshal(outer)
 				require.NoError(t, err)
@@ -221,10 +220,9 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 			fields[key] = original
 		}
 	}
-	body = `{"header":[],"data":[],"meta":{"rowCount":0,"truncated":false,"elapsedMs":0,"peakMemoryBytes":0,"resultBytes":0,"warnings":[]}}`
+	body = `{"data":{"fields":[],"values":[]},"meta":{"truncated":false,"elapsedMs":0,"warnings":[]}}`
 	query(true)
-	body = strings.Replace(body, `"data":[]`, `"data":[null]`, 1)
-	body = strings.Replace(body, `"rowCount":0`, `"rowCount":1`, 1)
+	body = strings.Replace(body, `"values":[]`, `"values":[null]`, 1)
 	query(false)
 	compressed := make([]byte, lz4.CompressBlockBound(len(graphStoreRows)))
 	n, err := lz4.CompressBlock([]byte(graphStoreRows), compressed, nil)
@@ -261,7 +259,7 @@ func TestGraphStoreDataRetriesAndToken(t *testing.T) {
 				if operation == "write" {
 					return c.PostGraphStoreData("project", "store", &PostGraphStoreDataRequest{LogGroup: &LogGroup{Logs: []*Log{{Time: proto.Uint32(1)}}}})
 				}
-				_, err := c.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1"})
+				_, err := c.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
 				return err
 			}
 			calls, status, failCount := 0, 500, 1

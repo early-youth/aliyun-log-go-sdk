@@ -38,6 +38,9 @@ type invocation struct {
 	RequestBase64      string          `json:"request_base64"`
 	Compression        string          `json:"compression"`
 	Query              string          `json:"query"`
+	From               *uint32         `json:"from"`
+	To                 *uint32         `json:"to"`
+	Session            string          `json:"session"`
 }
 
 func main() {
@@ -80,14 +83,16 @@ func main() {
 		}
 		err = client.PostGraphStoreData(p.Project, p.StoreName, &sls.PostGraphStoreDataRequest{LogGroup: group, CompressType: compression})
 	case "GetGraphStoreData":
+		if p.From == nil || p.To == nil {
+			panic("GraphStore query requires from and to")
+		}
 		var rows *sls.GetGraphStoreDataResponse
-		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query})
+		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, From: *p.From, To: *p.To, Session: p.Session})
 		if err == nil {
-			output["request_id"], output["header"], output["data"] = rows.RequestID, rows.Header, rows.Data
+			output["request_id"], output["header"], output["data"] = rows.RequestID, rows.Data.Fields, rows.Data.Values
 			output["meta"] = map[string]interface{}{
-				"row_count": rows.Meta.RowCount, "truncated": rows.Meta.Truncated,
-				"elapsed_ms": rows.Meta.ElapsedMs, "peak_memory_bytes": rows.Meta.PeakMemoryBytes,
-				"result_bytes": rows.Meta.ResultBytes, "warnings": rows.Meta.Warnings,
+				"row_count": len(rows.Data.Values), "truncated": rows.Meta.Truncated,
+				"elapsed_ms": rows.Meta.ElapsedMs, "warnings": rows.Meta.Warnings,
 			}
 		}
 	case "CreateGraphStore":

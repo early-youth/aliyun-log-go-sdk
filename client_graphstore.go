@@ -14,9 +14,9 @@ import (
 
 // CreateGraphStoreRequest supplies logical schema JSON; the service owns schema validation.
 type CreateGraphStoreRequest struct {
-	StoreName         string          `json:"storeName"`
-	InitialShardCount int32           `json:"initialShardCount"`
-	BaseSchema        json.RawMessage `json:"baseSchema"`
+	StoreName  string          `json:"storeName"`
+	ShardCount int32           `json:"shardCount"`
+	BaseSchema json.RawMessage `json:"baseSchema"`
 }
 
 type ListGraphStoresRequest struct {
@@ -29,6 +29,38 @@ type GraphStore struct {
 	StoreName         string `json:"storeName"`
 	State             string `json:"state"`
 	CurrentShardCount int32  `json:"currentShardCount"`
+}
+
+type GraphStoreShardInfo struct {
+	ShardID int32 `json:"shardId"`
+}
+
+type GetGraphStoreResponse struct {
+	GraphStore
+	Shards []GraphStoreShardInfo `json:"shards"`
+}
+
+func (s *GraphStoreShardInfo) UnmarshalJSON(data []byte) error {
+	_, err := decodeGraphStoreFields(data, map[string]interface{}{"shardId": &s.ShardID})
+	return err
+}
+
+func (r *GetGraphStoreResponse) UnmarshalJSON(data []byte) error {
+	if err := r.GraphStore.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	if _, err := decodeGraphStoreFields(data, map[string]interface{}{"shards": &r.Shards}); err != nil {
+		return err
+	}
+	if int64(r.CurrentShardCount) != int64(len(r.Shards)) {
+		return fmt.Errorf("GraphStore shard count mismatch")
+	}
+	for i := 1; i < len(r.Shards); i++ {
+		if r.Shards[i-1].ShardID >= r.Shards[i].ShardID {
+			return fmt.Errorf("GraphStore shards must be strictly ordered")
+		}
+	}
+	return nil
 }
 
 type ListGraphStoresResponse struct {
@@ -214,12 +246,12 @@ func (c *Client) CreateGraphStore(project string, req *CreateGraphStoreRequest) 
 	return c.graphStoreRequest(project, http.MethodPost, "/graphstore", nil, req, nil)
 }
 
-func (c *Client) GetGraphStore(project, graphStore string) (*GraphStore, error) {
+func (c *Client) GetGraphStore(project, graphStore string) (*GetGraphStoreResponse, error) {
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
 		return nil, err
 	}
-	result := &GraphStore{}
+	result := &GetGraphStoreResponse{}
 	if err := c.graphStoreRequest(project, http.MethodGet, uri, nil, nil, result); err != nil {
 		return nil, err
 	}

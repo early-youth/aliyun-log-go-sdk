@@ -83,7 +83,7 @@ func CreateTokenAutoUpdateClient(endpoint string, tokenUpdateFunc UpdateTokenFun
 type ClientInterface interface {
 	// GraphStore management APIs return logical schemas and do not poll lifecycle completion.
 	CreateGraphStore(project string, req *CreateGraphStoreRequest) error
-	GetGraphStore(project, graphStore string) (*GraphStore, error)
+	GetGraphStore(project, graphStore string) (*GetGraphStoreResponse, error)
 	ListGraphStores(project string, req *ListGraphStoresRequest) (*ListGraphStoresResponse, error)
 	DeleteGraphStore(project, graphStore string) error
 	SplitGraphStoreShard(project, graphStore string, shardID int32, splitHash *uint64) error
