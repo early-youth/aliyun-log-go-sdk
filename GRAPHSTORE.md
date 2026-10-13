@@ -21,9 +21,10 @@ Collection Get/Update/Delete take collectionSchemaName string, not an ID; numeri
 names remain strings. Get/List schemas require name and have no added ID. Update values
 must include the same name as the path; the service enforces immutable name/layout/keys.
 Collection pages use raw last-name tokens with byte ordering, default size 100/max 1000;
-the SDK passes tokens through without interpretation. The service owns configurable name
-validation (default lowercase/digits/interior '-'/'_', length 2..63), uniqueness and the
-10240 logical-schema create quota. SDK path validation only prevents unsafe path segments.
+the SDK passes tokens through without interpretation. Collection names accept `.` and `@`; `.`/`..`
+and unsafe path characters are rejected. The service validates CollectionSchema names against
+`^[A-Za-z][A-Za-z0-9._@-]{0,127}$`, uniqueness and the 1000 logical-schema quota.
+Store names retain the configurable LogStore name rules. SDK path validation only prevents unsafe segments.
 StoreID stays int64; SplitGraphStoreShard's *uint64 distinguishes nil from a pointer to zero.
 ListGraphStores accepts optional *int Offset/Size; collection pageSize 0 omits the parameter.
 
@@ -46,7 +47,7 @@ err := client.PostGraphStoreData(project, storeName, &sls.PostGraphStoreDataRequ
 if err != nil { return err }
 rows, err := client.GetGraphStoreData(project, storeName, &sls.GetGraphStoreDataRequest{
     Query: "MATCH (n) RETURN n",
-    From: 1700000000, To: 1700001000, Session: "opaque",
+    Start: 1700000000, End: 1700001000, Session: "opaque",
 })
 if err != nil { return err }
 // rows.Data.Fields, rows.Data.Values ([][]*string), rows.Meta and rows.RequestID.
@@ -63,7 +64,9 @@ An ACK does not imply query visibility or durability. Timeout results may be unk
 retrying can duplicate delivery. Callers own query convergence polling.
 
 GetGraphStore returns ordered unique signed-int32 shards; List keeps summary items.
-Query requires uint32 From < To with [from,to) semantics and accepts an optional opaque Session.
+Query uses int64 Start/End with 0 <= Start <= End and closed [start,end] semantics.
+NewGetGraphStoreDataRequest(query) defaults to [0,4294967295]; struct fields allow an explicit [0,0].
+Session is optional and opaque. No from/to aliases are supported.
 The public response has data.fields/values and only meta.truncated/elapsedMs/warnings;
 elapsedMs is signed int64. Cells stay string/null, including complex graph values.
 Old header/rowCount/peakMemoryBytes/resultBytes are not accepted. Missing, null or mistyped required fields, row width
@@ -80,3 +83,5 @@ go build -tags=e2e -o /path/to/graphstore-go-e2e ./internal/graphstore-e2e
 Credentials come only from GRAPHSTORE_E2E_ACCESS_KEY_ID/GRAPHSTORE_E2E_ACCESS_KEY_SECRET.
 The Runner owns scenarios, deadlines and resource cleanup. The bridge exposes all 13 management,
 write and query operations.
+
+The service caps the complete normalized logical CollectionSchema JSON array at 1 MiB (UTF-8 bytes, BaseSchema excluded). Create/Update exceeding this cap are rejected; Delete can clean up legacy oversized stores.

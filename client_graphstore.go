@@ -203,6 +203,16 @@ func graphStorePathSegment(name string) error {
 	return nil
 }
 
+func graphStoreCollectionPathSegment(name string) error {
+	if name == "" || name == "." || name == ".." || strings.IndexFunc(name, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '_' || r == '-' || r == '.' || r == '@')
+	}) >= 0 {
+		return fmt.Errorf("invalid GraphStore collection path segment")
+	}
+	return nil
+}
+
 func graphStorePath(name string) (string, error) {
 	if err := graphStorePathSegment(name); err != nil {
 		return "", err
@@ -337,7 +347,7 @@ func (c *Client) CreateGraphStoreCollectionSchema(project, graphStore string, sc
 }
 
 func (c *Client) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (*GetGraphStoreCollectionSchemaResponse, error) {
-	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+	if err := graphStoreCollectionPathSegment(collectionSchemaName); err != nil {
 		return nil, err
 	}
 	uri, err := graphStorePath(graphStore)
@@ -372,7 +382,7 @@ func (c *Client) ListGraphStoreCollectionSchemas(project, graphStore string, pag
 }
 
 func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema json.RawMessage) error {
-	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+	if err := graphStoreCollectionPathSegment(collectionSchemaName); err != nil {
 		return err
 	}
 	uri, err := graphStorePath(graphStore)
@@ -390,7 +400,7 @@ func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, co
 }
 
 func (c *Client) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) error {
-	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+	if err := graphStoreCollectionPathSegment(collectionSchemaName); err != nil {
 		return err
 	}
 	uri, err := graphStorePath(graphStore)

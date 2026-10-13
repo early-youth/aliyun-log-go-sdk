@@ -154,7 +154,7 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 	client := CreateNormalInterface("example.com", "key", "secret", "")
 	transport := testutil.NewMockTransport()
 	client.SetHTTPClient(&http.Client{Transport: transport})
-	for _, name := range []string{"", "../other", "a/b", "a%2fb", "a?x=y", "a#b", "雪", "a\x00b"} {
+	for _, name := range []string{"", ".", "..", "a\\b", "a b", "../other", "a/b", "a%2fb", "a?x=y", "a#b", "雪", "a\x00b"} {
 		_, err := client.GetGraphStoreCollectionSchema("project", "store", name)
 		require.Error(t, err)
 		require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", name, json.RawMessage(`{}`)))
@@ -205,7 +205,7 @@ func TestGraphStoreCollectionNamesStayOpaque(t *testing.T) {
 	client := CreateNormalInterface("example.com", "key", "secret", "")
 	transport := testutil.NewMockTransport()
 	client.SetHTTPClient(&http.Client{Transport: transport})
-	for _, name := range []string{"12", "1a", "aa", strings.Repeat("a", 63), "a", strings.Repeat("a", 64)} {
+	for _, name := range []string{"a.b", "a@b", "a.@b", "12", "1a", "aa", strings.Repeat("a", 63), "a", strings.Repeat("a", 64)} {
 		// Configurable length/name rules belong to the service, not the SDK.
 		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
 			require.Equal(t, "/graphstore/store/collectionschemas/"+name, req.URL.Path)
@@ -222,6 +222,31 @@ func TestGraphStoreCollectionNamesStayOpaque(t *testing.T) {
 			json.RawMessage(`{"name":"`+name+`","fields":[]}`)))
 		require.NoError(t, client.DeleteGraphStoreCollectionSchema("project", "store", name))
 	}
+}
+
+func TestGraphStoreUpdateNameIsValidatedByService(t *testing.T) {
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, schema := range []string{`{"fields":[]}`, `{"name":"renamed","fields":[]}`} {
+		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+			require.Equal(t, http.MethodPut, req.Method)
+			require.Equal(t, "/graphstore/store/collectionschemas/a.@b", req.URL.Path)
+			body, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			require.JSONEq(t, `{"value":`+schema+`}`, string(body))
+			response := httpmock.NewStringResponse(400, `{"errorCode":"ParameterInvalid","errorMessage":"invalid name"}`)
+			response.Header.Set("x-log-requestid", "update-name-request")
+			return response, nil
+		})
+		err := client.UpdateGraphStoreCollectionSchema("project", "store", "a.@b", json.RawMessage(schema))
+		var serviceError *Error
+		require.ErrorAs(t, err, &serviceError)
+		require.Equal(t, int32(400), serviceError.HTTPCode)
+		require.Equal(t, "update-name-request", serviceError.RequestID)
+		require.Equal(t, "ParameterInvalid", serviceError.Code)
+	}
+	require.Equal(t, 2, transport.GetTotalCallCount())
 }
 
 func TestGraphStoreErrorsAndTokenRefresh(t *testing.T) {

@@ -38,8 +38,8 @@ type invocation struct {
 	RequestBase64        string          `json:"request_base64"`
 	Compression          string          `json:"compression"`
 	Query                string          `json:"query"`
-	From                 *uint32         `json:"from"`
-	To                   *uint32         `json:"to"`
+	Start                *int64          `json:"start"`
+	End                  *int64          `json:"end"`
 	Session              string          `json:"session"`
 }
 
@@ -83,11 +83,11 @@ func main() {
 		}
 		err = client.PostGraphStoreData(p.Project, p.StoreName, &sls.PostGraphStoreDataRequest{LogGroup: group, CompressType: compression})
 	case "GetGraphStoreData":
-		if p.From == nil || p.To == nil {
-			panic("GraphStore query requires from and to")
+		if p.Start == nil || p.End == nil {
+			panic("GraphStore query requires start and end")
 		}
 		var rows *sls.GetGraphStoreDataResponse
-		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, From: *p.From, To: *p.To, Session: p.Session})
+		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, Start: *p.Start, End: *p.End, Session: p.Session})
 		if err == nil {
 			output["request_id"], output["header"], output["data"] = rows.RequestID, rows.Data.Fields, rows.Data.Values
 			output["meta"] = map[string]interface{}{

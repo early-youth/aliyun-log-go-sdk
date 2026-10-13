@@ -91,7 +91,7 @@ func TestGraphStoreDataWire(t *testing.T) {
 						require.Equal(t, raw, decoded)
 					}
 				}
-				query := &GetGraphStoreDataRequest{Query: "RETURN '雪\\\"\n\x00'", From: 0, To: 4294967295, Session: "opaque\x00session"}
+				query := &GetGraphStoreDataRequest{Query: "RETURN '雪\\\"\n\x00'", Start: 0, End: 4294967295, Session: "opaque\x00session"}
 				result, err := client.GetGraphStoreData("project", "store", query)
 				require.NoError(t, err)
 				check("query", "application/json", len(sent))
@@ -128,11 +128,11 @@ func TestGraphStoreDataInput(t *testing.T) {
 	require.Error(t, client.PostGraphStoreData("project", "store", nil))
 	for _, names := range [][2]string{{"", "store"}, {"project", ""}, {"project", "a/b"}, {"project", "a?b"}} {
 		require.Error(t, client.PostGraphStoreData(names[0], names[1], write))
-		result, err := client.GetGraphStoreData(names[0], names[1], &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
+		result, err := client.GetGraphStoreData(names[0], names[1], &GetGraphStoreDataRequest{Query: "RETURN 1", Start: 10, End: 20})
 		require.Error(t, err)
 		require.Nil(t, result)
 	}
-	for _, query := range []*GetGraphStoreDataRequest{nil, {}} {
+	for _, query := range []*GetGraphStoreDataRequest{nil, {}, {Query: "q", Start: -1, End: 1}, {Query: "q", Start: 2, End: 1}} {
 		result, err := client.GetGraphStoreData("project", "store", query)
 		require.Error(t, err)
 		require.Nil(t, result)
@@ -140,6 +140,32 @@ func TestGraphStoreDataInput(t *testing.T) {
 	write.LogGroup.Logs[0].Time = nil
 	require.Error(t, client.PostGraphStoreData("project", "store", write))
 	require.Zero(t, transport.GetTotalCallCount())
+}
+
+func TestGraphStoreClosedInt64TimeRange(t *testing.T) {
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, query := range []*GetGraphStoreDataRequest{
+		NewGetGraphStoreDataRequest("RETURN 1"),
+		{Query: "RETURN 1", Start: 0, End: 0},
+		{Query: "RETURN 1", Start: 4294967296, End: 9223372036854775807},
+	} {
+		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			var actual map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(body, &actual))
+			require.NotContains(t, actual, "from")
+			require.NotContains(t, actual, "to")
+			require.Equal(t, strconv.FormatInt(query.Start, 10), string(actual["start"]))
+			require.Equal(t, strconv.FormatInt(query.End, 10), string(actual["end"]))
+			require.NotContains(t, actual, "session")
+			return httpmock.NewStringResponse(200, graphStoreRows), nil
+		})
+		_, err := client.GetGraphStoreData("project", "store", query)
+		require.NoError(t, err)
+	}
 }
 
 func TestGraphStoreQueryResponses(t *testing.T) {
@@ -158,7 +184,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 	query := func(valid bool) {
 		t.Helper()
 		before := transport.GetTotalCallCount()
-		result, err := client.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
+		result, err := client.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", Start: 10, End: 20})
 		if valid {
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -259,7 +285,7 @@ func TestGraphStoreDataRetriesAndToken(t *testing.T) {
 				if operation == "write" {
 					return c.PostGraphStoreData("project", "store", &PostGraphStoreDataRequest{LogGroup: &LogGroup{Logs: []*Log{{Time: proto.Uint32(1)}}}})
 				}
-				_, err := c.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
+				_, err := c.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", Start: 10, End: 20})
 				return err
 			}
 			calls, status, failCount := 0, 500, 1

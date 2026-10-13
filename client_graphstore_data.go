@@ -19,9 +19,14 @@ type PostGraphStoreDataRequest struct {
 
 type GetGraphStoreDataRequest struct {
 	Query   string `json:"query"`
-	From    uint32 `json:"from"`
-	To      uint32 `json:"to"`
+	Start   int64  `json:"start"`
+	End     int64  `json:"end"`
 	Session string `json:"session,omitempty"`
+}
+
+// NewGetGraphStoreDataRequest defaults to the full event-time range.
+func NewGetGraphStoreDataRequest(query string) *GetGraphStoreDataRequest {
+	return &GetGraphStoreDataRequest{Query: query, End: 4294967295}
 }
 
 type GraphStoreQueryMeta struct {
@@ -101,8 +106,8 @@ func (c *Client) PostGraphStoreData(project, graphStore string, req *PostGraphSt
 
 // GetGraphStoreData returns a fully validated row result. Complex graph values stay strings.
 func (c *Client) GetGraphStoreData(project, graphStore string, req *GetGraphStoreDataRequest) (*GetGraphStoreDataResponse, error) {
-	if project == "" || req == nil || req.Query == "" || req.From >= req.To {
-		return nil, NewClientError(fmt.Errorf("project, GraphStore query and from < to are required"))
+	if project == "" || req == nil || req.Query == "" || req.Start < 0 || req.Start > req.End {
+		return nil, NewClientError(fmt.Errorf("project, GraphStore query and 0 <= start <= end are required"))
 	}
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
