@@ -1,82 +1,127 @@
 # GraphStore SDK
 
-Use the existing SLS ClientInterface, including CreateNormalInterface/CreateNormalInterfaceV2
-and TokenAutoUpdateClient. No separate GraphStore client is required.
+Use the existing `sls.ClientInterface`, including `Client` and `TokenAutoUpdateClient`.
+The following function accepts an existing client, project and store name:
 
 ```go
-store, err := client.GetGraphStore(project, storeName)
-if err != nil { return err }
-_ = store.CurrentShardCount
+import sls "github.com/aliyun/aliyun-log-go-sdk"
 
-page, err := client.ListGraphStoreCollectionSchemas(project, storeName, 100, "")
-if err != nil { return err }
-// Explicitly use page.NextPageToken for a subsequent page.
-_ = page.CollectionSchemas
+func configureGraphStore(client sls.ClientInterface, project, store string) error {
+    full := &sls.GraphStoreFullTextIndex{Token: " ,", CaseSensitive: false, Chn: false}
+    base := sls.GraphStoreBaseSchema{
+        TTLSeconds: 86400, IndexEnable: true, FullTextIndex: full,
+        VertexLayout: sls.GraphStoreVertexLayout{Label: "vl", ID: "vid"},
+        EdgeLayout: sls.GraphStoreEdgeLayout{Label: "el",
+            Source: sls.GraphStoreEndpoint{Label: "sl", ID: "sid"},
+            Target: sls.GraphStoreEndpoint{Label: "tl", ID: "tid"}},
+    }
+    if err := client.CreateGraphStore(project, &sls.CreateGraphStoreRequest{
+        StoreName: store, ShardCount: 2, BaseSchema: base,
+    }); err != nil { return err }
+    fields := []sls.GraphStoreFieldSchema{
+        {Name: "text", Type: sls.GraphStoreFieldString,
+            IndexConfig: sls.GraphStoreIndexConfig{Enable: true, FullTextIndex: full}},
+        {Name: "count", Type: sls.GraphStoreFieldInt,
+            IndexConfig: sls.GraphStoreIndexConfig{Enable: true, RangeIndex: &sls.GraphStoreRangeIndex{}}},
+        {Name: "exact", Type: sls.GraphStoreFieldBool,
+            IndexConfig: sls.GraphStoreIndexConfig{Enable: true}},
+    }
+    for _, item := range []struct { name string; layout sls.GraphStoreLayoutType; ck []sls.GraphStoreCollectionKeyValue }{
+        {"vertices", sls.GraphStoreLayoutVertex, []sls.GraphStoreCollectionKeyValue{{Name: "vl", Value: "person"}}},
+        {"edges", sls.GraphStoreLayoutEdge, []sls.GraphStoreCollectionKeyValue{
+            {Name: "sl", Value: "person"}, {Name: "el", Value: "knows"}, {Name: "tl", Value: "person"}}},
+    } {
+        schema := &sls.GraphStoreCollectionSchema{Name: item.name, Description: "example",
+            GraphLayout: item.layout, CollectionKeyValues: item.ck, Fields: fields}
+        if err := client.CreateGraphStoreCollectionSchema(project, store, schema); err != nil { return err }
+    }
+    // Nil TTL restores inheritance; [] replaces properties with an empty array.
+    if err := client.UpdateGraphStoreCollectionSchema(project, store, "vertices",
+        &sls.GraphStoreCollectionSchemaUpdate{Name: "vertices", Description: "updated", Fields: []sls.GraphStoreFieldSchema{}}); err != nil { return err }
+    result, err := client.GetGraphStoreBaseSchema(project, store)
+    if err != nil { return err }
+    _ = result.BaseSchema.VertexLayout.ID
+    page, err := client.ListGraphStoreCollectionSchemas(project, store, 100, "")
+    if err != nil { return err }
+    for _, schema := range page.CollectionSchemas { _ = schema.Fields }
+    // Explicitly pass page.NextPageToken when requesting another page.
+    return nil
+}
 ```
 
-CreateGraphStore takes *CreateGraphStoreRequest (StoreName, ShardCount, BaseSchema).
-Schemas are complete logical object values in json.RawMessage; Create/UpdateCollectionSchema
-wrap them as a JSON object, never as an escaped string. Returned schemas stay opaque RawMessage.
-Collection Get/Update/Delete take collectionSchemaName string, not an ID; numeric-looking
-names remain strings. Get/List schemas require name and have no added ID. Update values
-must include the same name as the path; the service enforces immutable name/layout/keys.
-Collection pages use raw last-name tokens with byte ordering, default size 100/max 1000;
-the SDK passes tokens through without interpretation. The service owns configurable name
-validation (default lowercase/digits/interior '-'/'_', length 2..63), uniqueness and the
-10240 logical-schema create quota. SDK path validation only prevents unsafe path segments.
-StoreID stays int64; SplitGraphStoreShard's *uint64 distinguishes nil from a pointer to zero.
-ListGraphStores accepts optional *int Offset/Size; collection pageSize 0 omits the parameter.
+## Logical schema contract
 
-Mutations return error only. A service *sls.Error retains HTTPCode and RequestID.
-Management methods add no retry; TokenAutoUpdateClient retains credential-refresh behavior.
-Timeouts may leave mutation results unknown.
-No automatic pagination or lifecycle polling.
+All schema inputs and Get/List results are concrete models. This changes source compatibility:
+remove raw JSON arguments and migrate custom SDK interface implementations. There is no raw
+compatibility overload. HTTP still uses `baseSchema`, `value`, `collectionSchema` and
+`collectionSchemas`; BaseSchema's two typed layouts encode as `graphLayouts:[vertex,edge]`.
 
-Compatibility: ClientInterface adds 13 GraphStore methods (11 management, write and query). Third-party implementations must
-add those methods; callers using the SDK's implementations keep using the existing constructors.
-No dependency or module version changes; these local changes are not a public release.
+| Model | Fields and meaning |
+| --- | --- |
+| BaseSchema | Required timeStateEnable, nonnegative int64 ttlSeconds, indexEnable, vertexLayout and edgeLayout; commonFieldNames defaults to []; optional fullTextIndex. |
+| VertexLayout | Fixed read-only name vertex; required label/id **field names**. Optional ck/pk/routeKey and keyIndexConfigs. |
+| EdgeLayout | Fixed read-only name edge; required source/target Endpoint and label field name; the same optional keys/index map. |
+| Endpoint | Required nonempty label/id field names. |
+| CollectionSchema | Required nonempty name/description, graphLayout (vertex/edge), collectionKeyValues and fields arrays. Optional int64 ttlSeconds. |
+| CollectionSchemaUpdate | Required name/description and complete replacement fields array; optional ttlSeconds. No layout or CK mutation fields. |
+| CollectionKeyValue | Required nonempty name and string value; value may be empty. These are logical constants, not arbitrary binary PB values. |
+| FieldSchema | Required nonempty name, type (STRING/INT/DOUBLE/BOOL) and IndexConfig. INT is signed int64. |
+| IndexConfig | Required enable; optional FullTextIndex or empty RangeIndex. Enabled with neither selects Exact. |
+| FullTextIndex | Required nonempty token string, caseSensitive and chn; optional nonempty optionToken string. |
+
+Base TTL 0 disables expiry. Collection TTL unset/null inherits BaseSchema; 0 disables expiry;
+positive values override in seconds. Update is replacement: unset/null TTL restores inheritance.
+Required `fields` and `collectionKeyValues` arrays may be empty. Optional keys are omitted when
+unset; explicit empty lists remain empty lists. Vertex defaults are ck=[label], pk=[id],
+routeKey=[label]; Edge defaults are ck=[source.label,label,target.label],
+pk=[source.id,target.id], routeKey=[source.label]. Defaults, valid key projections, index
+combinations, token rules, physical IDs/roles/versions and logical-to-physical compilation belong
+to the service. The SDK checks required values, empty elements, basic ranges and Update name equality.
+Unknown schema fields/enums, wrong known-field types and integer overflow return a parameter or
+BadResponse error instead of silently discarding configuration; upgrade the SDK to support new schema fields.
+
+Collection Get/Update/Delete take a string name. Names and pagination tokens remain opaque;
+SDK path checks allow safe ASCII characters (including `.`/`@` for collections) and reject `.`/`..`.
+The service owns configurable naming limits, the 1000 collection create quota and the 1 MiB
+normalized CollectionSchema JSON array cap (BaseSchema excluded).
+
+Go optional nested objects/TTL use pointers. Optional key slices/maps use nil for omission;
+non-nil empty slices/maps encode as []/{}. StoreID is int64; SplitGraphStoreShard's *uint64
+separates omission from zero. ListGraphStores Offset/Size use *int; collection pageSize 0 omits it.
+Missing/null nextPageToken means no next page. GetGraphStore reads signed-int32 shards without
+rechecking their count, order or uniqueness. Ordinary response extensions are ignored.
 
 ## Write and query
 
 ```go
 err := client.PostGraphStoreData(project, storeName, &sls.PostGraphStoreDataRequest{
-    LogGroup: group, // *sls.LogGroup; standard protobuf, preserving binary values.
-    CompressType: sls.Compress_LZ4,
+    LogGroup: group, CompressType: sls.Compress_LZ4,
 })
-if err != nil { return err }
 rows, err := client.GetGraphStoreData(project, storeName, &sls.GetGraphStoreDataRequest{
-    Query: "MATCH (n) RETURN n",
-    From: 1700000000, To: 1700001000, Session: "opaque",
+    Query: "MATCH (n) RETURN n", Start: 1700000000, End: 1700001000, Session: "opaque",
 })
-if err != nil { return err }
 // rows.Data.Fields, rows.Data.Values ([][]*string), rows.Meta and rows.RequestID.
-// A nil cell is JSON null; a pointer to "" is an empty string.
+// Nil cell is JSON null; pointer to "" is an empty string. Handle err before reading rows.
 ```
 
-Write returns only error. Compression defaults to LZ4 (zero); NONE and Zstd are also supported,
-exactly as in LogStore. After compression validation, a nil/zero-log group is a local no-op:
-no request and no server ACK. A nil request is invalid. No local size threshold is added.
-Actual writes serialize the standard LogGroup once, then use the existing LogStore request,
-signing and retry path. Data methods retain RetryOnServerErrorEnabled, RetryTimeOut and
-credential refresh; retry timeout does not cancel an already-running HTTP request.
-An ACK does not imply query visibility or durability. Timeout results may be unknown and
-retrying can duplicate delivery. Callers own query convergence polling.
+Write returns error only. NONE/LZ4/Zstd retain native LogStore behavior; LZ4 is the default.
+After compression validation, nil/zero-log groups are local no-ops; a nil request is invalid.
+Actual writes serialize standard LogGroup once, preserving exact binary PB values. Management
+uses c.request; data APIs retain request(convert(...)), RetryOnServerErrorEnabled, RetryTimeOut
+and credential refresh. The retry timeout does not cancel an in-flight HTTP request.
 
-GetGraphStore returns ordered unique signed-int32 shards; List keeps summary items.
-Query requires uint32 From < To with [from,to) semantics and accepts an optional opaque Session.
-The public response has data.fields/values and only meta.truncated/elapsedMs/warnings;
-elapsedMs is signed int64. Cells stay string/null, including complex graph values.
-Old header/rowCount/peakMemoryBytes/resultBytes are not accepted. Missing, null or mistyped required fields, row width
-mismatches, invalid JSON/UTF-8 and bad compressed responses fail without partial rows or
-parser retries. Responses support uncompressed or LZ4 only, with raw size checked against
-256 MiB before LZ4 allocation. Existing LogStore response behavior is unchanged.
+Query sends int64 closed [start,end], 0 <= start <= end. NewGetGraphStoreDataRequest defaults
+to [0,4294967295]; an explicit struct supports [0,0]. Session is optional and opaque.
+Ordinary management/query bodies decode through encoding/json into typed fields. Required
+outer/data/meta fields are checked; native type/overflow errors remain errors. Unknown result
+members and unequal row widths are accepted. Native string decoding handles null string-list
+elements and invalid UTF-8; no extra UTF-8 pass or cell coercion is added. Responses support
+uncompressed/LZ4 through the existing decompressor. The raw-size header must fit int;
+there is no GraphStore 256 MiB cap. Actual decompression/length errors remain BadResponse.
+Management and query decode failures retain HTTP code, response headers and requestId without
+parser retries. Service errors retain *sls.Error; mutations can have unknown results after timeout.
+ACK does not promise query visibility/durability; retries may duplicate delivery. Callers own polling.
 
-Validation: go test ./...; go test -race -run GraphStore ./...
-The e2e-tagged internal/graphstore-e2e bridge runs one native SDK operation for the shared
-GraphStore E2E Runner. Build with:
-```sh
-go build -tags=e2e -o /path/to/graphstore-go-e2e ./internal/graphstore-e2e
-```
-Credentials come only from GRAPHSTORE_E2E_ACCESS_KEY_ID/GRAPHSTORE_E2E_ACCESS_KEY_SECRET.
-The Runner owns scenarios, deadlines and resource cleanup. The bridge exposes all 13 management,
-write and query operations.
+SDK validation uses `go test .`, targeted race tests and `go build .`.
+All 13 operations stay on the existing interface. No dependency/module version change or release
+is implied. E2E bridges are outside this SDK refinement and need separate migration before reuse.

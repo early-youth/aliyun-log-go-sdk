@@ -1,7 +1,6 @@
 package sls
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,14 +8,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
-// CreateGraphStoreRequest supplies logical schema JSON; the service owns schema validation.
+// CreateGraphStoreRequest supplies a concrete logical schema; the service owns business compilation.
 type CreateGraphStoreRequest struct {
-	StoreName  string          `json:"storeName"`
-	ShardCount int32           `json:"shardCount"`
-	BaseSchema json.RawMessage `json:"baseSchema"`
+	StoreName  string               `json:"storeName"`
+	ShardCount int32                `json:"shardCount"`
+	BaseSchema GraphStoreBaseSchema `json:"baseSchema"`
 }
 
 type ListGraphStoresRequest struct {
@@ -40,29 +38,6 @@ type GetGraphStoreResponse struct {
 	Shards []GraphStoreShardInfo `json:"shards"`
 }
 
-func (s *GraphStoreShardInfo) UnmarshalJSON(data []byte) error {
-	_, err := decodeGraphStoreFields(data, map[string]interface{}{"shardId": &s.ShardID})
-	return err
-}
-
-func (r *GetGraphStoreResponse) UnmarshalJSON(data []byte) error {
-	if err := r.GraphStore.UnmarshalJSON(data); err != nil {
-		return err
-	}
-	if _, err := decodeGraphStoreFields(data, map[string]interface{}{"shards": &r.Shards}); err != nil {
-		return err
-	}
-	if int64(r.CurrentShardCount) != int64(len(r.Shards)) {
-		return fmt.Errorf("GraphStore shard count mismatch")
-	}
-	for i := 1; i < len(r.Shards); i++ {
-		if r.Shards[i-1].ShardID >= r.Shards[i].ShardID {
-			return fmt.Errorf("GraphStore shards must be strictly ordered")
-		}
-	}
-	return nil
-}
-
 type ListGraphStoresResponse struct {
 	Stores []GraphStore `json:"stores"`
 	Count  uint64       `json:"count"`
@@ -70,128 +45,23 @@ type ListGraphStoresResponse struct {
 }
 
 type GetGraphStoreBaseSchemaResponse struct {
-	ProjectID  int32           `json:"projectId"`
-	StoreName  string          `json:"storeName"`
-	StoreID    int64           `json:"storeId"`
-	BaseSchema json.RawMessage `json:"baseSchema"`
+	ProjectID  int32                `json:"projectId"`
+	StoreName  string               `json:"storeName"`
+	StoreID    int64                `json:"storeId"`
+	BaseSchema GraphStoreBaseSchema `json:"baseSchema"`
 }
 
 type GetGraphStoreCollectionSchemaResponse struct {
-	ProjectID        int32           `json:"projectId"`
-	StoreName        string          `json:"storeName"`
-	CollectionSchema json.RawMessage `json:"collectionSchema"`
+	ProjectID        int32                      `json:"projectId"`
+	StoreName        string                     `json:"storeName"`
+	CollectionSchema GraphStoreCollectionSchema `json:"collectionSchema"`
 }
 
 type ListGraphStoreCollectionSchemasResponse struct {
-	ProjectID         int32             `json:"projectId"`
-	StoreName         string            `json:"storeName"`
-	CollectionSchemas []json.RawMessage `json:"collectionSchemas"`
-	NextPageToken     string            `json:"nextPageToken,omitempty"`
-}
-
-// Decode required wire fields without coercing null, floats or overflowing integers.
-// Unknown fields stay forward-compatible; schema internals remain raw JSON.
-func decodeGraphStoreFields(data []byte, fields map[string]interface{}) (map[string]json.RawMessage, error) {
-	var object map[string]json.RawMessage
-	if !utf8.Valid(data) {
-		return nil, fmt.Errorf("invalid UTF-8 in GraphStore JSON")
-	}
-	if err := json.Unmarshal(data, &object); err != nil {
-		return nil, err
-	}
-	if object == nil {
-		return nil, fmt.Errorf("GraphStore response must be a JSON object")
-	}
-	for name, target := range fields {
-		raw, ok := object[name]
-		if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return nil, fmt.Errorf("missing or null GraphStore field %s", name)
-		}
-		if err := json.Unmarshal(raw, target); err != nil {
-			return nil, err
-		}
-	}
-	return object, nil
-}
-
-func (s *GraphStore) UnmarshalJSON(data []byte) error {
-	_, err := decodeGraphStoreFields(data, map[string]interface{}{
-		"projectId": &s.ProjectID, "storeName": &s.StoreName,
-		"state": &s.State, "currentShardCount": &s.CurrentShardCount,
-	})
-	return err
-}
-
-func (r *ListGraphStoresResponse) UnmarshalJSON(data []byte) error {
-	_, err := decodeGraphStoreFields(data, map[string]interface{}{
-		"stores": &r.Stores, "count": &r.Count, "total": &r.Total,
-	})
-	return err
-}
-
-func graphStoreSchemaObject(schema json.RawMessage) error {
-	value := bytes.TrimSpace(schema)
-	if len(value) == 0 || value[0] != '{' || !utf8.Valid(value) || !json.Valid(value) {
-		return fmt.Errorf("GraphStore schema must be a JSON object")
-	}
-	return nil
-}
-
-func (r *GetGraphStoreBaseSchemaResponse) UnmarshalJSON(data []byte) error {
-	_, err := decodeGraphStoreFields(data, map[string]interface{}{
-		"projectId": &r.ProjectID, "storeName": &r.StoreName,
-		"storeId": &r.StoreID, "baseSchema": &r.BaseSchema,
-	})
-	if err != nil {
-		return err
-	}
-	if r.BaseSchema[0] != '{' {
-		return fmt.Errorf("GraphStore schema must be a JSON object")
-	}
-	return nil
-}
-
-func checkGraphStoreCollection(schema json.RawMessage) error {
-	var name string
-	_, err := decodeGraphStoreFields(schema, map[string]interface{}{"name": &name})
-	if err == nil && name == "" {
-		return fmt.Errorf("empty GraphStore collection name")
-	}
-	return err
-}
-
-func (r *GetGraphStoreCollectionSchemaResponse) UnmarshalJSON(data []byte) error {
-	_, err := decodeGraphStoreFields(data, map[string]interface{}{
-		"projectId": &r.ProjectID, "storeName": &r.StoreName, "collectionSchema": &r.CollectionSchema,
-	})
-	if err != nil {
-		return err
-	}
-	return checkGraphStoreCollection(r.CollectionSchema)
-}
-
-func (r *ListGraphStoreCollectionSchemasResponse) UnmarshalJSON(data []byte) error {
-	object, err := decodeGraphStoreFields(data, map[string]interface{}{
-		"projectId": &r.ProjectID, "storeName": &r.StoreName, "collectionSchemas": &r.CollectionSchemas,
-	})
-	if err != nil {
-		return err
-	}
-	r.NextPageToken = ""
-	if raw, ok := object["nextPageToken"]; ok {
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return fmt.Errorf("null GraphStore nextPageToken")
-		}
-		if err := json.Unmarshal(raw, &r.NextPageToken); err != nil {
-			return err
-		}
-	}
-	for _, schema := range r.CollectionSchemas {
-		if err := checkGraphStoreCollection(schema); err != nil {
-			return err
-		}
-	}
-	return nil
+	ProjectID         int32                        `json:"projectId"`
+	StoreName         string                       `json:"storeName"`
+	CollectionSchemas []GraphStoreCollectionSchema `json:"collectionSchemas"`
+	NextPageToken     string                       `json:"nextPageToken,omitempty"`
 }
 
 func graphStorePathSegment(name string) error {
@@ -199,6 +69,16 @@ func graphStorePathSegment(name string) error {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
 	}) >= 0 {
 		return fmt.Errorf("invalid GraphStore path segment")
+	}
+	return nil
+}
+
+func graphStoreCollectionPathSegment(name string) error {
+	if name == "" || name == "." || name == ".." || strings.IndexFunc(name, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '_' || r == '-' || r == '.' || r == '@')
+	}) >= 0 {
+		return fmt.Errorf("invalid GraphStore collection path segment")
 	}
 	return nil
 }
@@ -243,14 +123,17 @@ func (c *Client) graphStoreRequest(project, method, uri string, query url.Values
 	if err != nil {
 		return readResponseError(err)
 	}
-	return json.Unmarshal(data, result)
+	if err := json.Unmarshal(data, result); err != nil {
+		return newBadResponseError(string(data), response.Header, response.StatusCode, err)
+	}
+	return nil
 }
 
 func (c *Client) CreateGraphStore(project string, req *CreateGraphStoreRequest) error {
 	if req == nil {
 		return fmt.Errorf("CreateGraphStore request is required")
 	}
-	if err := graphStoreSchemaObject(req.BaseSchema); err != nil {
+	if err := req.BaseSchema.validate(); err != nil {
 		return err
 	}
 	return c.graphStoreRequest(project, http.MethodPost, "/graphstore", nil, req, nil)
@@ -322,22 +205,25 @@ func (c *Client) GetGraphStoreBaseSchema(project, graphStore string) (*GetGraphS
 	return result, nil
 }
 
-func (c *Client) CreateGraphStoreCollectionSchema(project, graphStore string, schema json.RawMessage) error {
+func (c *Client) CreateGraphStoreCollectionSchema(project, graphStore string, schema *GraphStoreCollectionSchema) error {
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
 		return err
 	}
-	if err := graphStoreSchemaObject(schema); err != nil {
+	if schema == nil {
+		return fmt.Errorf("collectionSchema is required")
+	}
+	if err := schema.validate(); err != nil {
 		return err
 	}
 	body := struct {
-		Value json.RawMessage `json:"value"`
+		Value *GraphStoreCollectionSchema `json:"value"`
 	}{schema}
 	return c.graphStoreRequest(project, http.MethodPost, uri+"/collectionschemas", nil, body, nil)
 }
 
 func (c *Client) GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (*GetGraphStoreCollectionSchemaResponse, error) {
-	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+	if err := graphStoreCollectionPathSegment(collectionSchemaName); err != nil {
 		return nil, err
 	}
 	uri, err := graphStorePath(graphStore)
@@ -371,26 +257,32 @@ func (c *Client) ListGraphStoreCollectionSchemas(project, graphStore string, pag
 	return result, nil
 }
 
-func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema json.RawMessage) error {
-	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema *GraphStoreCollectionSchemaUpdate) error {
+	if err := graphStoreCollectionPathSegment(collectionSchemaName); err != nil {
 		return err
 	}
 	uri, err := graphStorePath(graphStore)
 	if err != nil {
 		return err
 	}
-	if err := graphStoreSchemaObject(schema); err != nil {
+	if schema == nil {
+		return fmt.Errorf("collectionSchema is required")
+	}
+	if err := schema.validate(); err != nil {
 		return err
 	}
+	if schema.Name != collectionSchemaName {
+		return fmt.Errorf("GraphStore collection name must match the path")
+	}
 	body := struct {
-		Value json.RawMessage `json:"value"`
+		Value *GraphStoreCollectionSchemaUpdate `json:"value"`
 	}{schema}
 	return c.graphStoreRequest(project, http.MethodPut,
 		uri+"/collectionschemas/"+collectionSchemaName, nil, body, nil)
 }
 
 func (c *Client) DeleteGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) error {
-	if err := graphStorePathSegment(collectionSchemaName); err != nil {
+	if err := graphStoreCollectionPathSegment(collectionSchemaName); err != nil {
 		return err
 	}
 	uri, err := graphStorePath(graphStore)
@@ -399,4 +291,154 @@ func (c *Client) DeleteGraphStoreCollectionSchema(project, graphStore string, co
 	}
 	return c.graphStoreRequest(project, http.MethodDelete,
 		uri+"/collectionschemas/"+collectionSchemaName, nil, nil, nil)
+}
+
+func (r *GraphStoreShardInfo) UnmarshalJSON(data []byte) error {
+	type plain GraphStoreShardInfo
+	var candidate GraphStoreShardInfo
+	value := struct {
+		*plain
+		ShardID *int32 `json:"shardId"`
+	}{plain: (*plain)(&candidate)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ShardID == nil {
+		return fmt.Errorf("missing or null GraphStoreShardInfo field")
+	}
+	candidate.ShardID = *value.ShardID
+	*r = candidate
+	return nil
+}
+
+func (r *GraphStore) UnmarshalJSON(data []byte) error {
+	type plain GraphStore
+	var candidate GraphStore
+	value := struct {
+		*plain
+		ProjectID         *int32  `json:"projectId"`
+		StoreName         *string `json:"storeName"`
+		State             *string `json:"state"`
+		CurrentShardCount *int32  `json:"currentShardCount"`
+	}{plain: (*plain)(&candidate)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ProjectID == nil || value.StoreName == nil || value.State == nil || value.CurrentShardCount == nil {
+		return fmt.Errorf("missing or null GraphStore field")
+	}
+	candidate.ProjectID = *value.ProjectID
+	candidate.StoreName = *value.StoreName
+	candidate.State = *value.State
+	candidate.CurrentShardCount = *value.CurrentShardCount
+	*r = candidate
+	return nil
+}
+
+func (r *ListGraphStoresResponse) UnmarshalJSON(data []byte) error {
+	type plain ListGraphStoresResponse
+	var candidate ListGraphStoresResponse
+	value := struct {
+		*plain
+		Stores *[]GraphStore `json:"stores"`
+		Count  *uint64       `json:"count"`
+		Total  *int64        `json:"total"`
+	}{plain: (*plain)(&candidate)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.Stores == nil || value.Count == nil || value.Total == nil {
+		return fmt.Errorf("missing or null ListGraphStoresResponse field")
+	}
+	candidate.Stores = *value.Stores
+	candidate.Count = *value.Count
+	candidate.Total = *value.Total
+	*r = candidate
+	return nil
+}
+
+func (r *GetGraphStoreBaseSchemaResponse) UnmarshalJSON(data []byte) error {
+	type plain GetGraphStoreBaseSchemaResponse
+	var candidate GetGraphStoreBaseSchemaResponse
+	value := struct {
+		*plain
+		ProjectID  *int32                `json:"projectId"`
+		StoreName  *string               `json:"storeName"`
+		StoreID    *int64                `json:"storeId"`
+		BaseSchema *GraphStoreBaseSchema `json:"baseSchema"`
+	}{plain: (*plain)(&candidate)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ProjectID == nil || value.StoreName == nil || value.StoreID == nil || value.BaseSchema == nil {
+		return fmt.Errorf("missing or null GetGraphStoreBaseSchemaResponse field")
+	}
+	candidate.ProjectID = *value.ProjectID
+	candidate.StoreName = *value.StoreName
+	candidate.StoreID = *value.StoreID
+	candidate.BaseSchema = *value.BaseSchema
+	*r = candidate
+	return nil
+}
+
+func (r *GetGraphStoreCollectionSchemaResponse) UnmarshalJSON(data []byte) error {
+	type plain GetGraphStoreCollectionSchemaResponse
+	var candidate GetGraphStoreCollectionSchemaResponse
+	value := struct {
+		*plain
+		ProjectID        *int32                      `json:"projectId"`
+		StoreName        *string                     `json:"storeName"`
+		CollectionSchema *GraphStoreCollectionSchema `json:"collectionSchema"`
+	}{plain: (*plain)(&candidate)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ProjectID == nil || value.StoreName == nil || value.CollectionSchema == nil {
+		return fmt.Errorf("missing or null GetGraphStoreCollectionSchemaResponse field")
+	}
+	candidate.ProjectID = *value.ProjectID
+	candidate.StoreName = *value.StoreName
+	candidate.CollectionSchema = *value.CollectionSchema
+	*r = candidate
+	return nil
+}
+
+func (r *ListGraphStoreCollectionSchemasResponse) UnmarshalJSON(data []byte) error {
+	type plain ListGraphStoreCollectionSchemasResponse
+	var candidate ListGraphStoreCollectionSchemasResponse
+	value := struct {
+		*plain
+		ProjectID         *int32                        `json:"projectId"`
+		StoreName         *string                       `json:"storeName"`
+		CollectionSchemas *[]GraphStoreCollectionSchema `json:"collectionSchemas"`
+	}{plain: (*plain)(&candidate)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ProjectID == nil || value.StoreName == nil || value.CollectionSchemas == nil {
+		return fmt.Errorf("missing or null ListGraphStoreCollectionSchemasResponse field")
+	}
+	candidate.ProjectID = *value.ProjectID
+	candidate.StoreName = *value.StoreName
+	candidate.CollectionSchemas = *value.CollectionSchemas
+	*r = candidate
+	return nil
+}
+
+func (r *GetGraphStoreResponse) UnmarshalJSON(data []byte) error {
+	var value struct {
+		ProjectID         *int32                 `json:"projectId"`
+		StoreName         *string                `json:"storeName"`
+		State             *string                `json:"state"`
+		CurrentShardCount *int32                 `json:"currentShardCount"`
+		Shards            *[]GraphStoreShardInfo `json:"shards"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value.ProjectID == nil || value.StoreName == nil || value.State == nil || value.CurrentShardCount == nil || value.Shards == nil {
+		return fmt.Errorf("missing or null GetGraphStoreResponse field")
+	}
+	*r = GetGraphStoreResponse{GraphStore{*value.ProjectID, *value.StoreName, *value.State, *value.CurrentShardCount}, *value.Shards}
+	return nil
 }

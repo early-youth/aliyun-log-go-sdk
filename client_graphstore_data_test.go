@@ -91,7 +91,7 @@ func TestGraphStoreDataWire(t *testing.T) {
 						require.Equal(t, raw, decoded)
 					}
 				}
-				query := &GetGraphStoreDataRequest{Query: "RETURN '雪\\\"\n\x00'", From: 0, To: 4294967295, Session: "opaque\x00session"}
+				query := &GetGraphStoreDataRequest{Query: "RETURN '雪\\\"\n\x00'", Start: 0, End: 4294967295, Session: "opaque\x00session"}
 				result, err := client.GetGraphStoreData("project", "store", query)
 				require.NoError(t, err)
 				check("query", "application/json", len(sent))
@@ -128,11 +128,11 @@ func TestGraphStoreDataInput(t *testing.T) {
 	require.Error(t, client.PostGraphStoreData("project", "store", nil))
 	for _, names := range [][2]string{{"", "store"}, {"project", ""}, {"project", "a/b"}, {"project", "a?b"}} {
 		require.Error(t, client.PostGraphStoreData(names[0], names[1], write))
-		result, err := client.GetGraphStoreData(names[0], names[1], &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
+		result, err := client.GetGraphStoreData(names[0], names[1], &GetGraphStoreDataRequest{Query: "RETURN 1", Start: 10, End: 20})
 		require.Error(t, err)
 		require.Nil(t, result)
 	}
-	for _, query := range []*GetGraphStoreDataRequest{nil, {}} {
+	for _, query := range []*GetGraphStoreDataRequest{nil, {}, {Query: "q", Start: -1, End: 1}, {Query: "q", Start: 2, End: 1}} {
 		result, err := client.GetGraphStoreData("project", "store", query)
 		require.Error(t, err)
 		require.Nil(t, result)
@@ -140,6 +140,32 @@ func TestGraphStoreDataInput(t *testing.T) {
 	write.LogGroup.Logs[0].Time = nil
 	require.Error(t, client.PostGraphStoreData("project", "store", write))
 	require.Zero(t, transport.GetTotalCallCount())
+}
+
+func TestGraphStoreClosedInt64TimeRange(t *testing.T) {
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, query := range []*GetGraphStoreDataRequest{
+		NewGetGraphStoreDataRequest("RETURN 1"),
+		{Query: "RETURN 1", Start: 0, End: 0},
+		{Query: "RETURN 1", Start: 4294967296, End: 9223372036854775807},
+	} {
+		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			var actual map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(body, &actual))
+			require.NotContains(t, actual, "from")
+			require.NotContains(t, actual, "to")
+			require.Equal(t, strconv.FormatInt(query.Start, 10), string(actual["start"]))
+			require.Equal(t, strconv.FormatInt(query.End, 10), string(actual["end"]))
+			require.NotContains(t, actual, "session")
+			return httpmock.NewStringResponse(200, graphStoreRows), nil
+		})
+		_, err := client.GetGraphStoreData("project", "store", query)
+		require.NoError(t, err)
+	}
 }
 
 func TestGraphStoreQueryResponses(t *testing.T) {
@@ -158,7 +184,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 	query := func(valid bool) {
 		t.Helper()
 		before := transport.GetTotalCallCount()
-		result, err := client.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
+		result, err := client.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", Start: 10, End: 20})
 		if valid {
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -172,28 +198,37 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 		require.Equal(t, before+1, transport.GetTotalCallCount())
 	}
 	query(true)
-	for _, body = range []string{"", "null", "[]", "{}", graphStoreRows + "{}", graphStoreRows + "\x00", strings.Replace(graphStoreRows, "雪", "\xff", 1)} {
+	for _, body = range []string{"", "null", "[]", "{}", graphStoreRows + "{}", graphStoreRows + "\x00"} {
 		query(false)
 	}
 	for _, replacement := range [][2]string{
-		{`"fields":["a","b","node"]`, `"fields":[null,"b","node"]`},
 		{`"fields":["a","b","node"]`, `"fields":[1,"b","node"]`},
-		{`[null,"","{\"id\":\"雪\"}"]`, `null`},
-		{`[null,"","{\"id\":\"雪\"}"]`, `[]`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `[1,"",""]`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `[{},"",""]`},
 		{`"truncated":true`, `"truncated":1`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":-9223372036854775809`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":1.5`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":"1"`},
-		{`"truncated":true`, `"rowCount":2,"truncated":true`},
-		{`"warnings":["","雪"]`, `"warnings":[null]`},
 		{`"warnings":["","雪"]`, `"warnings":[false]`},
 	} {
 		body = strings.Replace(graphStoreRows, replacement[0], replacement[1], 1)
 		require.NotEqual(t, graphStoreRows, body)
 		query(false)
 	}
+	for _, replacement := range [][2]string{
+		{`"fields":["a","b","node"]`, `"fields":[null,"b","node"]`},
+		{`[null,"","{\"id\":\"雪\"}"]`, `null`},
+		{`[null,"","{\"id\":\"雪\"}"]`, `[]`},
+		{`"truncated":true`, `"rowCount":2,"truncated":true`},
+		{`"warnings":["","雪"]`, `"warnings":[null]`},
+		{`"data":{`, `"diagnostic":{},"data":{"extra":1,`},
+	} {
+		body = strings.Replace(graphStoreRows, replacement[0], replacement[1], 1)
+		require.NotEqual(t, graphStoreRows, body)
+		query(true)
+	}
+	body = strings.Replace(graphStoreRows, "雪", "\xff", 1)
+	query(true) // encoding/json replaces invalid UTF-8, as it does for LogStore.
 	for _, scope := range []string{"", "meta", "data"} {
 		var outer map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal([]byte(graphStoreRows), &outer))
@@ -223,7 +258,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 	body = `{"data":{"fields":[],"values":[]},"meta":{"truncated":false,"elapsedMs":0,"warnings":[]}}`
 	query(true)
 	body = strings.Replace(body, `"values":[]`, `"values":[null]`, 1)
-	query(false)
+	query(true)
 	compressed := make([]byte, lz4.CompressBlockBound(len(graphStoreRows)))
 	n, err := lz4.CompressBlock([]byte(graphStoreRows), compressed, nil)
 	require.NoError(t, err)
@@ -236,7 +271,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 		query(false)
 	}
 	body = string(compressed[:n])
-	for _, rawSize = range []string{"", "-1", "x", "268435457", "4294967296", "0", strconv.Itoa(len(graphStoreRows) + 1)} {
+	for _, rawSize = range []string{"", "-1", "x", "9223372036854775808", "0", strconv.Itoa(len(graphStoreRows) + 1)} {
 		query(false)
 	}
 	body, rawSize = "not-lz4", strconv.Itoa(len(graphStoreRows))
@@ -259,7 +294,7 @@ func TestGraphStoreDataRetriesAndToken(t *testing.T) {
 				if operation == "write" {
 					return c.PostGraphStoreData("project", "store", &PostGraphStoreDataRequest{LogGroup: &LogGroup{Logs: []*Log{{Time: proto.Uint32(1)}}}})
 				}
-				_, err := c.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", From: 10, To: 20})
+				_, err := c.GetGraphStoreData("project", "store", &GetGraphStoreDataRequest{Query: "RETURN 1", Start: 10, End: 20})
 				return err
 			}
 			calls, status, failCount := 0, 500, 1

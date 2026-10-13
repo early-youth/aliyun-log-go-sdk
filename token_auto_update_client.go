@@ -1,7 +1,6 @@
 package sls
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -109,7 +108,7 @@ func (c *TokenAutoUpdateClient) GetGraphStoreBaseSchema(project, graphStore stri
 	return
 }
 
-func (c *TokenAutoUpdateClient) CreateGraphStoreCollectionSchema(project, graphStore string, schema json.RawMessage) (err error) {
+func (c *TokenAutoUpdateClient) CreateGraphStoreCollectionSchema(project, graphStore string, schema *GraphStoreCollectionSchema) (err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
 		err = c.logClient.CreateGraphStoreCollectionSchema(project, graphStore, schema)
 		if !c.processError(err) {
@@ -139,7 +138,7 @@ func (c *TokenAutoUpdateClient) ListGraphStoreCollectionSchemas(project, graphSt
 	return
 }
 
-func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema json.RawMessage) (err error) {
+func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema *GraphStoreCollectionSchemaUpdate) (err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
 		err = c.logClient.UpdateGraphStoreCollectionSchema(project, graphStore, collectionSchemaName, schema)
 		if !c.processError(err) {
