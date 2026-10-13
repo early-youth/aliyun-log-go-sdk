@@ -124,4 +124,4 @@ ACK does not promise query visibility/durability; retries may duplicate delivery
 
 SDK validation uses `go test .`, targeted race tests and `go build .`.
 All 13 operations stay on the existing interface. No dependency/module version change or release
-is implied. E2E bridges are outside this SDK refinement and need separate migration before reuse.
+is implied. The E2E bridge decodes fixture JSON into these typed models before calling the SDK.

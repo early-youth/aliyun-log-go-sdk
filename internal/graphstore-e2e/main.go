@@ -38,9 +38,15 @@ type invocation struct {
 	RequestBase64        string          `json:"request_base64"`
 	Compression          string          `json:"compression"`
 	Query                string          `json:"query"`
-	From                 *uint32         `json:"from"`
-	To                   *uint32         `json:"to"`
+	Start                *int64          `json:"start"`
+	End                  *int64          `json:"end"`
 	Session              string          `json:"session"`
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func main() {
@@ -66,7 +72,11 @@ func main() {
 		return (&net.Dialer{}).DialContext(ctx, network, p.DialAddress)
 	}}
 	defer transport.CloseIdleConnections()
-	client.SetHTTPClient(&http.Client{Transport: transport, Timeout: time.Duration(p.TimeoutMS) * time.Millisecond})
+	requestStarted := false
+	client.SetHTTPClient(&http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requestStarted = true
+		return transport.RoundTrip(request)
+	}), Timeout: time.Duration(p.TimeoutMS) * time.Millisecond})
 	var result interface{}
 	var err error
 	output := map[string]interface{}{"http_status": 200}
@@ -83,11 +93,11 @@ func main() {
 		}
 		err = client.PostGraphStoreData(p.Project, p.StoreName, &sls.PostGraphStoreDataRequest{LogGroup: group, CompressType: compression})
 	case "GetGraphStoreData":
-		if p.From == nil || p.To == nil {
-			panic("GraphStore query requires from and to")
+		if p.Start == nil || p.End == nil {
+			panic("GraphStore query requires start and end")
 		}
 		var rows *sls.GetGraphStoreDataResponse
-		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, From: *p.From, To: *p.To, Session: p.Session})
+		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, Start: *p.Start, End: *p.End, Session: p.Session})
 		if err == nil {
 			output["request_id"], output["header"], output["data"] = rows.RequestID, rows.Data.Fields, rows.Data.Values
 			output["meta"] = map[string]interface{}{
@@ -111,13 +121,19 @@ func main() {
 	case "GetGraphStoreBaseSchema":
 		result, err = client.GetGraphStoreBaseSchema(p.Project, p.StoreName)
 	case "CreateGraphStoreCollectionSchema":
-		err = client.CreateGraphStoreCollectionSchema(p.Project, p.StoreName, p.Body)
+		var schema sls.GraphStoreCollectionSchema
+		if err = json.Unmarshal(p.Body, &schema); err == nil {
+			err = client.CreateGraphStoreCollectionSchema(p.Project, p.StoreName, &schema)
+		}
 	case "GetGraphStoreCollectionSchema":
 		result, err = client.GetGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName)
 	case "ListGraphStoreCollectionSchemas":
 		result, err = client.ListGraphStoreCollectionSchemas(p.Project, p.StoreName, p.PageSize, p.PageToken)
 	case "UpdateGraphStoreCollectionSchema":
-		err = client.UpdateGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName, p.Body)
+		var schema sls.GraphStoreCollectionSchemaUpdate
+		if err = json.Unmarshal(p.Body, &schema); err == nil {
+			err = client.UpdateGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName, &schema)
+		}
 	case "DeleteGraphStoreCollectionSchema":
 		err = client.DeleteGraphStoreCollectionSchema(p.Project, p.StoreName, p.CollectionSchemaName)
 	default:
@@ -128,13 +144,18 @@ func main() {
 	}
 	if err != nil {
 		serviceError, ok := err.(*sls.Error)
-		if !ok {
-			fmt.Fprintln(os.Stderr, "SDK local/transport error:", err)
+		if ok {
+			output["http_status"] = serviceError.HTTPCode
+			output["request_id"] = serviceError.RequestID
+			output["error_code"] = serviceError.Code
+		} else if !requestStarted {
+			output["http_status"], output["request_id"] = 0, ""
+			output["local_error"], output["error_code"] = true, "SDK_LOCAL_ERROR"
+			output["error_message"] = err.Error()
+		} else {
+			fmt.Fprintln(os.Stderr, "SDK transport/decode error:", err)
 			os.Exit(2)
 		}
-		output["http_status"] = serviceError.HTTPCode
-		output["request_id"] = serviceError.RequestID
-		output["error_code"] = serviceError.Code
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
 		panic(err)

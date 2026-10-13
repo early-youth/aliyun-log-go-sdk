@@ -228,6 +228,17 @@ func TestGraphStoreCollectionNamesStayOpaque(t *testing.T) {
 	}
 }
 
+func TestGraphStoreUpdateNameIsValidatedLocally(t *testing.T) {
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, name := range []string{"", "renamed"} {
+		err := client.UpdateGraphStoreCollectionSchema("project", "store", "a.@b", graphStoreTestUpdate(name))
+		require.Error(t, err)
+	}
+	require.Equal(t, 0, transport.GetTotalCallCount())
+}
+
 func TestGraphStoreErrorsAndTokenRefresh(t *testing.T) {
 	normal := CreateNormalInterface("example.com", "key", "secret", "old-token")
 	refreshes := 0
