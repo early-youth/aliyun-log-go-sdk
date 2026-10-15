@@ -76,9 +76,11 @@ unset; explicit empty lists remain empty lists. Vertex defaults are ck=[label], 
 routeKey=[label]; Edge defaults are ck=[source.label,label,target.label],
 pk=[source.id,target.id], routeKey=[source.label]. Defaults, valid key projections, index
 combinations, token rules, physical IDs/roles/versions and logical-to-physical compilation belong
-to the service. The SDK checks required values, empty elements, basic ranges and Update name equality.
-Unknown schema fields/enums, wrong known-field types and integer overflow return a parameter or
-BadResponse error instead of silently discarding configuration; upgrade the SDK to support new schema fields.
+to the service. Like LogStore indexes, ordinary schema fields use encoding/json and their JSON tags;
+missing/null members use native zero/nil values and unknown members are ignored. String-backed enum
+values are preserved. The SDK does not repeat required/nonempty/TTL business checks. BaseSchema only
+adapts graphLayouts, and omitted commonFieldNames uses the service default. Known-field type and integer
+overflow errors retain BadResponse context; path safety, envelope metadata and Update name equality remain checked.
 
 Collection Get/Update/Delete take a string name. Names and pagination tokens remain opaque;
 SDK path checks allow safe ASCII characters (including `.`/`@` for collections) and reject `.`/`..`.

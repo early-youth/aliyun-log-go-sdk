@@ -23,18 +23,11 @@ func TestGraphStoreTypedSchemaWireAndCompatibility(t *testing.T) {
 	require.NotContains(t, encoded, `"pk"`)
 	var read GraphStoreBaseSchema
 	require.NoError(t, json.Unmarshal([]byte(encoded), &read))
-	base.CommonFieldNames = []string{}
 	require.Equal(t, base, read)
 	for _, replacement := range [][2]string{
 		{`"ttlSeconds":9223372036854775807`, `"ttlSeconds":9223372036854775808`},
 		{`"ttlSeconds":9223372036854775807`, `"ttlSeconds":1.5`},
-		{`"ttlSeconds":9223372036854775807`, `"ttlSeconds":null`},
 		{`"timeStateEnable":false`, `"timeStateEnable":"false"`},
-		{`"name":"vertex"`, `"name":"other"`},
-		{`"name":"vertex"`, `"source":null,"name":"vertex"`},
-		{`"name":"edge"`, `"id":null,"name":"edge"`},
-		{`"chn":false`, `"chn":false,"newOption":1`},
-		{`"graphLayouts":`, `"newField":true,"graphLayouts":`},
 	} {
 		bad := strings.Replace(encoded, replacement[0], replacement[1], 1)
 		require.NotEqual(t, encoded, bad)
@@ -55,11 +48,8 @@ func TestGraphStoreTypedSchemaWireAndCompatibility(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(encoded), &decoded))
 	require.Equal(t, *collection, decoded)
 	for _, replacement := range [][2]string{
-		{`"type":"INT"`, `"type":"UNKNOWN"`},
-		{`"graphLayout":"vertex"`, `"graphLayout":"unknown"`},
-		{`"rangeIndex":{}`, `"rangeIndex":{"unsupported":true}`},
-		{`"enable":true`, `"enable":null`},
-		{`"fields":`, `"unsupported":1,"fields":`},
+		{`"enable":true`, `"enable":"true"`},
+		{`"fields":`, `"fields":"wrong","ignored":`},
 	} {
 		bad := strings.Replace(encoded, replacement[0], replacement[1], 1)
 		require.NotEqual(t, encoded, bad)
@@ -80,5 +70,32 @@ func TestGraphStoreTypedSchemaWireAndCompatibility(t *testing.T) {
 	require.Nil(t, update.TTLSeconds)
 	negative := int64(-1)
 	collection.TTLSeconds = &negative
-	require.Error(t, collection.validate())
+	require.NoError(t, json.Unmarshal([]byte(graphStoreTestJSON(t, collection)), &decoded))
+	require.Equal(t, &negative, decoded.TTLSeconds)
+}
+
+func TestGraphStoreSchemaNativeDefaults(t *testing.T) {
+	var collection GraphStoreCollectionSchema
+	require.NoError(t, json.Unmarshal([]byte(`{"graphLayout":"future","fields":[null,{"type":"UNKNOWN","newOption":true}],"ttlSeconds":-1}`), &collection))
+	require.Empty(t, collection.Name)
+	require.Nil(t, collection.CollectionKeyValues)
+	require.Equal(t, GraphStoreLayoutType("future"), collection.GraphLayout)
+	require.Equal(t, GraphStoreFieldType("UNKNOWN"), collection.Fields[1].Type)
+	require.Equal(t, int64(-1), *collection.TTLSeconds)
+	var base GraphStoreBaseSchema
+	require.NoError(t, json.Unmarshal([]byte(`{"newOption":true,"graphLayouts":[null,{"name":"vertex","id":"v"},{"name":"other"}]}`), &base))
+	require.Equal(t, "v", base.VertexLayout.ID)
+	require.Empty(t, base.VertexLayout.Label)
+	require.Empty(t, base.EdgeLayout.Label)
+	require.Nil(t, base.CommonFieldNames)
+	for _, body := range []string{`{"projectId":1,"storeName":"s","storeId":1}`, `{"projectId":1,"storeName":"s","storeId":1,"baseSchema":null,"collectionSchema":{},"collectionSchemas":[null,{}]}`} {
+		var base GetGraphStoreBaseSchemaResponse
+		var schema GetGraphStoreCollectionSchemaResponse
+		var list ListGraphStoreCollectionSchemasResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &base))
+		require.NoError(t, json.Unmarshal([]byte(body), &schema))
+		require.NoError(t, json.Unmarshal([]byte(body), &list))
+		require.Empty(t, base.BaseSchema.VertexLayout.ID)
+		require.Empty(t, schema.CollectionSchema.Name)
+	}
 }

@@ -133,9 +133,6 @@ func (c *Client) CreateGraphStore(project string, req *CreateGraphStoreRequest) 
 	if req == nil {
 		return fmt.Errorf("CreateGraphStore request is required")
 	}
-	if err := req.BaseSchema.validate(); err != nil {
-		return err
-	}
 	return c.graphStoreRequest(project, http.MethodPost, "/graphstore", nil, req, nil)
 }
 
@@ -213,9 +210,6 @@ func (c *Client) CreateGraphStoreCollectionSchema(project, graphStore string, sc
 	if schema == nil {
 		return fmt.Errorf("collectionSchema is required")
 	}
-	if err := schema.validate(); err != nil {
-		return err
-	}
 	body := struct {
 		Value *GraphStoreCollectionSchema `json:"value"`
 	}{schema}
@@ -267,9 +261,6 @@ func (c *Client) UpdateGraphStoreCollectionSchema(project, graphStore string, co
 	}
 	if schema == nil {
 		return fmt.Errorf("collectionSchema is required")
-	}
-	if err := schema.validate(); err != nil {
-		return err
 	}
 	if schema.Name != collectionSchemaName {
 		return fmt.Errorf("GraphStore collection name must match the path")
@@ -362,21 +353,19 @@ func (r *GetGraphStoreBaseSchemaResponse) UnmarshalJSON(data []byte) error {
 	var candidate GetGraphStoreBaseSchemaResponse
 	value := struct {
 		*plain
-		ProjectID  *int32                `json:"projectId"`
-		StoreName  *string               `json:"storeName"`
-		StoreID    *int64                `json:"storeId"`
-		BaseSchema *GraphStoreBaseSchema `json:"baseSchema"`
+		ProjectID *int32  `json:"projectId"`
+		StoreName *string `json:"storeName"`
+		StoreID   *int64  `json:"storeId"`
 	}{plain: (*plain)(&candidate)}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
-	if value.ProjectID == nil || value.StoreName == nil || value.StoreID == nil || value.BaseSchema == nil {
+	if value.ProjectID == nil || value.StoreName == nil || value.StoreID == nil {
 		return fmt.Errorf("missing or null GetGraphStoreBaseSchemaResponse field")
 	}
 	candidate.ProjectID = *value.ProjectID
 	candidate.StoreName = *value.StoreName
 	candidate.StoreID = *value.StoreID
-	candidate.BaseSchema = *value.BaseSchema
 	*r = candidate
 	return nil
 }
@@ -386,19 +375,17 @@ func (r *GetGraphStoreCollectionSchemaResponse) UnmarshalJSON(data []byte) error
 	var candidate GetGraphStoreCollectionSchemaResponse
 	value := struct {
 		*plain
-		ProjectID        *int32                      `json:"projectId"`
-		StoreName        *string                     `json:"storeName"`
-		CollectionSchema *GraphStoreCollectionSchema `json:"collectionSchema"`
+		ProjectID *int32  `json:"projectId"`
+		StoreName *string `json:"storeName"`
 	}{plain: (*plain)(&candidate)}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
-	if value.ProjectID == nil || value.StoreName == nil || value.CollectionSchema == nil {
+	if value.ProjectID == nil || value.StoreName == nil {
 		return fmt.Errorf("missing or null GetGraphStoreCollectionSchemaResponse field")
 	}
 	candidate.ProjectID = *value.ProjectID
 	candidate.StoreName = *value.StoreName
-	candidate.CollectionSchema = *value.CollectionSchema
 	*r = candidate
 	return nil
 }
@@ -408,19 +395,17 @@ func (r *ListGraphStoreCollectionSchemasResponse) UnmarshalJSON(data []byte) err
 	var candidate ListGraphStoreCollectionSchemasResponse
 	value := struct {
 		*plain
-		ProjectID         *int32                        `json:"projectId"`
-		StoreName         *string                       `json:"storeName"`
-		CollectionSchemas *[]GraphStoreCollectionSchema `json:"collectionSchemas"`
+		ProjectID *int32  `json:"projectId"`
+		StoreName *string `json:"storeName"`
 	}{plain: (*plain)(&candidate)}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
-	if value.ProjectID == nil || value.StoreName == nil || value.CollectionSchemas == nil {
+	if value.ProjectID == nil || value.StoreName == nil {
 		return fmt.Errorf("missing or null ListGraphStoreCollectionSchemasResponse field")
 	}
 	candidate.ProjectID = *value.ProjectID
 	candidate.StoreName = *value.StoreName
-	candidate.CollectionSchemas = *value.CollectionSchemas
 	*r = candidate
 	return nil
 }

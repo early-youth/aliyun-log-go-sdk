@@ -160,9 +160,7 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 		require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", name, graphStoreTestUpdate("aa")))
 		require.Error(t, client.DeleteGraphStoreCollectionSchema("project", "store", name))
 	}
-	require.Error(t, client.CreateGraphStore("project", &CreateGraphStoreRequest{StoreName: "store"}))
 	require.Error(t, client.CreateGraphStoreCollectionSchema("project", "store", nil))
-	require.Error(t, client.CreateGraphStoreCollectionSchema("project", "store", &GraphStoreCollectionSchema{}))
 	require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", "aa", nil))
 	require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", "aa", graphStoreTestUpdate("bb")))
 	require.Error(t, client.CreateGraphStore("project", nil))
@@ -183,14 +181,14 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 	for _, id := range []string{"null", "1.5", `"42"`, "9223372036854775808"} {
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","storeId":`+id+`,"baseSchema":`+graphStoreTestJSON(t, graphStoreTestBase())+`}`), &GetGraphStoreBaseSchemaResponse{}))
 	}
-	for _, name := range []string{"null", "1.5", "42", `""`, "[]", "{}"} {
+	for _, name := range []string{"1.5", "42", "[]", "{}"} {
 		schema := `{"description":"schema","graphLayout":"vertex","collectionKeyValues":[],"fields":[],"name":` + name + "}"
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","collectionSchema":`+schema+"}"), &GetGraphStoreCollectionSchemaResponse{}))
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","collectionSchemas":[`+schema+"]}"), &ListGraphStoreCollectionSchemasResponse{}))
 	}
 	require.Error(t, json.Unmarshal([]byte(`{"stores":[{}],"count":1,"total":1}`), &ListGraphStoresResponse{}))
 	require.Error(t, json.Unmarshal([]byte(`{"stores":[],"count":-1,"total":0}`), &ListGraphStoresResponse{}))
-	for _, schema := range []string{"null", "[]", `"{}"`, "1", "true", "{bad}", "{\"x\":\"\xff\"}"} {
+	for _, schema := range []string{"[]", `"{}"`, "1", "true", "{bad}"} {
 		require.Error(t, json.Unmarshal([]byte(`{"projectId":1,"storeName":"s","storeId":1,"baseSchema":`+schema+`}`), &GetGraphStoreBaseSchemaResponse{}))
 	}
 	var base GetGraphStoreBaseSchemaResponse
@@ -326,4 +324,27 @@ func TestGraphStoreManagementBadResponseContext(t *testing.T) {
 	require.Equal(t, 200, bad.HTTPCode)
 	require.Equal(t, "management-request", http.Header(bad.RespHeader).Get(RequestIDHeader))
 	require.Equal(t, 1, transport.GetTotalCallCount())
+}
+
+func TestGraphStoreSchemaBusinessRulesReachService(t *testing.T) {
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		require.True(t, json.Valid(body))
+		return httpmock.NewStringResponse(400, `{"errorCode":"InvalidParameter","errorMessage":"invalid schema"}`), nil
+	})
+	negative := int64(-1)
+	for _, err := range []error{
+		client.CreateGraphStore("project", &CreateGraphStoreRequest{StoreName: "store", BaseSchema: GraphStoreBaseSchema{TTLSeconds: -1}}),
+		client.CreateGraphStoreCollectionSchema("project", "store", &GraphStoreCollectionSchema{TTLSeconds: &negative}),
+		client.UpdateGraphStoreCollectionSchema("project", "store", "one", &GraphStoreCollectionSchemaUpdate{Name: "one", TTLSeconds: &negative}),
+	} {
+		var serviceError *Error
+		require.ErrorAs(t, err, &serviceError)
+		require.Equal(t, int32(400), serviceError.HTTPCode)
+	}
+	require.Equal(t, 3, transport.GetTotalCallCount())
 }
