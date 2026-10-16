@@ -69,13 +69,21 @@ func main() {
 		client.SetRegion(p.Region)
 	}
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, p.DialAddress)
+		if p.DialAddress != "" {
+			address = p.DialAddress
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}}
 	defer transport.CloseIdleConnections()
 	requestStarted := false
+	responseStatus, responseRequestID := 0, ""
 	client.SetHTTPClient(&http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		requestStarted = true
-		return transport.RoundTrip(request)
+		response, err := transport.RoundTrip(request)
+		if response != nil {
+			responseStatus, responseRequestID = response.StatusCode, response.Header.Get(sls.RequestIDHeader)
+		}
+		return response, err
 	}), Timeout: time.Duration(p.TimeoutMS) * time.Millisecond})
 	var result interface{}
 	var err error
@@ -140,7 +148,10 @@ func main() {
 		panic("unsupported GraphStore operation")
 	}
 	if p.Action != "PostGraphStoreData" && p.Action != "GetGraphStoreData" {
-		output["request_id"], output["body"] = "", result
+		output["request_id"], output["body"] = responseRequestID, result
+	}
+	if responseStatus != 0 {
+		output["http_status"] = responseStatus
 	}
 	if err != nil {
 		serviceError, ok := err.(*sls.Error)
@@ -148,6 +159,7 @@ func main() {
 			output["http_status"] = serviceError.HTTPCode
 			output["request_id"] = serviceError.RequestID
 			output["error_code"] = serviceError.Code
+			output["error_message"] = serviceError.Message
 		} else if !requestStarted {
 			output["http_status"], output["request_id"] = 0, ""
 			output["local_error"], output["error_code"] = true, "SDK_LOCAL_ERROR"
