@@ -58,19 +58,20 @@ compatibility overload. HTTP still uses `baseSchema`, `value`, `collectionSchema
 
 | Model | Fields and meaning |
 | --- | --- |
-| BaseSchema | Required timeStateEnable, nonnegative int64 ttlSeconds, indexEnable, vertexLayout and edgeLayout; commonFieldNames defaults to []; optional fullTextIndex. |
+| BaseSchema | Required timeStateEnable, positive int64 ttlSeconds, indexEnable, vertexLayout and edgeLayout; commonFieldNames defaults to []; optional fullTextIndex. |
 | VertexLayout | Fixed read-only name vertex; required label/id **field names**. Optional ck/pk/routeKey and keyIndexConfigs. |
 | EdgeLayout | Fixed read-only name edge; required source/target Endpoint and label field name; the same optional keys/index map. |
 | Endpoint | Required nonempty label/id field names. |
-| CollectionSchema | Required nonempty name/description, graphLayout (vertex/edge), collectionKeyValues and fields arrays. Optional int64 ttlSeconds. |
-| CollectionSchemaUpdate | Required name/description and complete replacement fields array; optional ttlSeconds. No layout or CK mutation fields. |
+| CollectionSchema | Required nonempty name/description, graphLayout (vertex/edge), collectionKeyValues and fields arrays. Optional positive int64 ttlSeconds. |
+| CollectionSchemaUpdate | Required name/description and complete replacement fields array; optional positive ttlSeconds. No layout or CK mutation fields. |
 | CollectionKeyValue | Required nonempty name and string value; value may be empty. These are logical constants, not arbitrary binary PB values. |
 | FieldSchema | Required nonempty name, type (STRING/INT/DOUBLE/BOOL) and IndexConfig. INT is signed int64. |
 | IndexConfig | Required enable; optional FullTextIndex or empty RangeIndex. Enabled with neither selects Exact. |
 | FullTextIndex | Required nonempty token string, caseSensitive and chn; optional nonempty optionToken string. |
 
-Base TTL 0 disables expiry. Collection TTL unset/null inherits BaseSchema; 0 disables expiry;
-positive values override in seconds. Update is replacement: unset/null TTL restores inheritance.
+Base TTL must be positive. Collection TTL unset/null inherits BaseSchema; an explicit value
+must be positive seconds. Zero/negative TTL values are invalid. Update is replacement:
+unset/null TTL restores inheritance. The service owns these business checks.
 Required `fields` and `collectionKeyValues` arrays may be empty. Optional keys are omitted when
 unset; explicit empty lists remain empty lists. Vertex defaults are ck=[label], pk=[id],
 routeKey=[label]; Edge defaults are ck=[source.label,label,target.label],
@@ -102,8 +103,8 @@ err := client.PostGraphStoreData(project, storeName, &sls.PostGraphStoreDataRequ
 rows, err := client.GetGraphStoreData(project, storeName, &sls.GetGraphStoreDataRequest{
     Query: "MATCH (n) RETURN n", Start: 1700000000, End: 1700001000, Session: "opaque",
 })
-// rows.Data.Fields, rows.Data.Values ([][]*string), rows.Meta and rows.RequestID.
-// Nil cell is JSON null; pointer to "" is an empty string. Handle err before reading rows.
+// rows.Data.Fields, rows.Data.Values ([][]interface{}), rows.Meta and rows.RequestID.
+// nil is JSON null; numbers are json.Number; strings, booleans, maps and lists remain native. Handle err first.
 ```
 
 Write returns error only. NONE/LZ4/Zstd retain native LogStore behavior; LZ4 is the default.
@@ -114,7 +115,8 @@ and credential refresh. The retry timeout does not cancel an in-flight HTTP requ
 
 Query sends int64 closed [start,end], 0 <= start <= end. NewGetGraphStoreDataRequest defaults
 to [0,4294967295]; an explicit struct supports [0,0]. Session is optional and opaque.
-Ordinary management/query bodies decode through encoding/json into typed fields. Required
+Management bodies decode through encoding/json into typed fields; query uses json.Decoder.UseNumber
+and rejects trailing input. Required
 outer/data/meta fields are checked; native type/overflow errors remain errors. Unknown result
 members and unequal row widths are accepted. Native string decoding handles null string-list
 elements and invalid UTF-8; no extra UTF-8 pass or cell coercion is added. Responses support
@@ -127,3 +129,44 @@ ACK does not promise query visibility/durability; retries may duplicate delivery
 SDK validation uses `go test .`, targeted race tests and `go build .`.
 All 13 operations stay on the existing interface. No dependency/module version change or release
 is implied. The E2E bridge decodes fixture JSON into these typed models before calling the SDK.
+
+## Runnable CRUD sample
+
+[example/graphstore/main.go](example/graphstore/main.go) 可直接运行，包含中文注释。
+在 Go SDK 仓库根目录执行，先配置环境变量（AK/SK 从本机安全凭据源注入，不写入命令历史）：
+
+```bash
+export GRAPHSTORE_ENDPOINT='https://cn-wulanchabu-stg-pg2-share.log.aliyuncs.com'
+export GRAPHSTORE_PROJECT='luyao-test-wulan-pg2'
+# 同时设置 ALIBABA_CLOUD_ACCESS_KEY_ID 和 ALIBABA_CLOUD_ACCESS_KEY_SECRET
+go run ./example/graphstore
+```
+
+示例使用已有 Project，不要求为空，也不创建/删除 Project。每次创建唯一名称的 Store，
+演示 Store Create/Get/List/Delete、BaseSchema 读取、CollectionSchema CRUD/分页，以及
+两个 `person` 顶点和一条 `knows` 边的写入、查询、更新和删除。ID 使用 `alice` / `bob`，无需 32 位。
+Base TTL 为 86400 秒，Collection 初始继承 Base，更新时完整提交字段并设置 TTL=3600 秒。
+不演示 Split、Project 管理或故障恢复。
+
+全程复用一个原生 SDK Client，每次 HTTP 请求超时 30 秒。
+`GRAPHSTORE_SIGNATURE_VERSION` 默认 `v1`，只接受 `v1` / `v4`；使用 V4 必须显式设置
+`GRAPHSTORE_REGION`，不从域名推断。无需修改源码即可分别运行：
+
+```bash
+GRAPHSTORE_SIGNATURE_VERSION=v1 go run ./example/graphstore
+GRAPHSTORE_SIGNATURE_VERSION=v4 GRAPHSTORE_REGION=cn-wulanchabu-stg-pg2 go run ./example/graphstore
+```
+
+READY/Schema 完成后，针对当前 stg 缓存收敛固定等待 65 秒再首写；READY、查询读回和
+删除终态各轮询最多 120 秒，另加最后一次在途 SDK 调用耗时。
+五次读回严格比较列名、行值和 `truncated=false`，ACK 不代表已持久化或立即可查询。
+示例不自行重放失败写入；原生 SDK 的 retry/credential refresh 行为保持不变，超时可能结果未知，
+原生重试也可能重复投递。
+
+只有 Create 明确成功后才自动清理本次 Store，业务中途失败也会清理；Create 失败或清理失败时
+根据启动输出的 Project/Store 名核对资源。成功标记为
+`GraphStore sample passed; Store deletion confirmed.`，同时确认精确的 `404/GraphStoreNotExist`。
+管理和写入 API 原生只返回 error，查询成功响应提供 request ID；失败诊断不输出原始响应正文。
+
+查询结果保留 JSON 原生类型：数字、布尔、数组、对象、null 和字符串；路径为数组，实体为对象。
+业务属性中的 JSON 文本仍是字符串，不递归解析。Go 的数字为 `json.Number`，可调用 `Int64()` 或 `Float64()`，避免大整数精度丢失。

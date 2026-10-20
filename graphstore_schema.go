@@ -84,7 +84,7 @@ type GraphStoreCollectionSchema struct {
 	GraphLayout GraphStoreLayoutType `json:"graphLayout"`
 	// Required complete user CK values; system CK values belong to the service.
 	CollectionKeyValues []GraphStoreCollectionKeyValue `json:"collectionKeyValues"`
-	// Nil inherits BaseSchema; zero disables expiry; positive values are seconds.
+	// Nil inherits BaseSchema; explicit TTL must be positive seconds.
 	TTLSeconds *int64 `json:"ttlSeconds,omitempty"`
 	// Required property array; an empty array is valid.
 	Fields []GraphStoreFieldSchema `json:"fields"`
@@ -96,7 +96,7 @@ type GraphStoreCollectionSchemaUpdate struct {
 	Name string `json:"name"`
 	// Required nonempty replacement description.
 	Description string `json:"description"`
-	// Nil restores inheritance; zero disables expiry; this is replacement, not patch.
+	// Nil restores inheritance; explicit TTL must be positive seconds. Replacement, not patch.
 	TTLSeconds *int64 `json:"ttlSeconds,omitempty"`
 	// Required complete replacement property array; an empty array is valid.
 	Fields []GraphStoreFieldSchema `json:"fields"`
@@ -197,7 +197,7 @@ func (s GraphStoreEdgeLayout) MarshalJSON() ([]byte, error) {
 type GraphStoreBaseSchema struct {
 	// Required time state setting.
 	TimeStateEnable bool `json:"timeStateEnable"`
-	// Required nonnegative seconds; zero disables expiry.
+	// Required positive seconds; validated by the service.
 	TTLSeconds int64 `json:"ttlSeconds"`
 	// Optional common property names; the service defaults omitted values to an empty array.
 	CommonFieldNames []string `json:"commonFieldNames,omitempty"`

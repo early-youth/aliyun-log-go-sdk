@@ -22,6 +22,39 @@ import (
 
 const graphStoreRows = `{"data":{"fields":["a","b","node"],"values":[[null,"","{\"id\":\"雪\"}"],["x\u0000y","雪","s"]]},"meta":{"truncated":true,"elapsedMs":-9223372036854775808,"warnings":["","雪"]}}`
 
+func TestGraphStoreQueryStructuredValues(t *testing.T) {
+	body := []byte(`{"data":{"fields":["v"],"values":[[9223372036854775807],[true],[[1,{"name":"雪","text":"[1,2]"}]],[{"labels":["person"],"properties":{"age":30}}],["123"],["true"],["[]"],[null],[""]]},"meta":{"truncated":false,"elapsedMs":1,"warnings":[]}}`)
+	result, err := decodeGraphStoreQuery(body)
+	require.NoError(t, err)
+	require.Equal(t, json.Number("9223372036854775807"), result.Data.Values[0][0])
+	require.Equal(t, true, result.Data.Values[1][0])
+	require.Equal(t, []interface{}{json.Number("1"), map[string]interface{}{"name": "雪", "text": "[1,2]"}}, result.Data.Values[2][0])
+	require.Equal(t, map[string]interface{}{"labels": []interface{}{"person"}, "properties": map[string]interface{}{"age": json.Number("30")}}, result.Data.Values[3][0])
+	for i, value := range []interface{}{"123", "true", "[]", nil, ""} {
+		require.Equal(t, value, result.Data.Values[i+4][0])
+	}
+	for _, version := range []AuthVersionType{AuthV1, AuthV4} {
+		client := CreateNormalInterfaceV2("http://example.com", NewStaticCredentialsProvider("key", "secret", ""))
+		client.SetAuthVersion(version)
+		client.SetRegion("cn-test")
+		transport := testutil.NewMockTransport()
+		client.SetHTTPClient(&http.Client{Transport: transport})
+		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+			response := httpmock.NewStringResponse(200, string(body))
+			response.Header.Set(RequestIDHeader, "structured-request")
+			return response, nil
+		})
+		decoded, err := client.GetGraphStoreData("project", "store", NewGetGraphStoreDataRequest("RETURN 1"))
+		require.NoError(t, err)
+		require.Equal(t, result.Data.Values, decoded.Data.Values)
+		require.Equal(t, "structured-request", decoded.RequestID)
+	}
+	for _, suffix := range []string{" null", " trailing", "\x00"} {
+		_, err := decodeGraphStoreQuery(append(append([]byte(nil), body...), suffix...))
+		require.Error(t, err)
+	}
+}
+
 func TestGraphStoreDataWire(t *testing.T) {
 	for _, version := range []AuthVersionType{AuthV1, AuthV4} {
 		for _, token := range []string{"", "token"} {
@@ -101,9 +134,9 @@ func TestGraphStoreDataWire(t *testing.T) {
 				require.Equal(t, *query, actual)
 				require.Equal(t, "data-request", result.RequestID)
 				require.Nil(t, result.Data.Values[0][0])
-				require.Equal(t, "", *result.Data.Values[0][1])
-				require.Equal(t, `{"id":"雪"}`, *result.Data.Values[0][2])
-				require.Equal(t, "x\x00y", *result.Data.Values[1][0])
+				require.Equal(t, "", result.Data.Values[0][1])
+				require.Equal(t, `{"id":"雪"}`, result.Data.Values[0][2])
+				require.Equal(t, "x\x00y", result.Data.Values[1][0])
 				require.Equal(t, int64(-9223372036854775808), result.Meta.ElapsedMs)
 				require.Equal(t, []string{"", "雪"}, result.Meta.Warnings)
 				require.True(t, result.Meta.Truncated)
@@ -203,8 +236,6 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 	}
 	for _, replacement := range [][2]string{
 		{`"fields":["a","b","node"]`, `"fields":[1,"b","node"]`},
-		{`[null,"","{\"id\":\"雪\"}"]`, `[1,"",""]`},
-		{`[null,"","{\"id\":\"雪\"}"]`, `[{},"",""]`},
 		{`"truncated":true`, `"truncated":1`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":-9223372036854775809`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":1.5`},

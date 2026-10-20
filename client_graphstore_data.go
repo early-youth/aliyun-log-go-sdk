@@ -1,6 +1,7 @@
 package sls
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,8 +37,8 @@ type GraphStoreQueryMeta struct {
 }
 
 type GraphStoreQueryData struct {
-	Fields []string    `json:"fields"`
-	Values [][]*string `json:"values"`
+	Fields []string        `json:"fields"`
+	Values [][]interface{} `json:"values"`
 }
 
 type GetGraphStoreDataResponse struct {
@@ -104,7 +105,7 @@ func (c *Client) PostGraphStoreData(project, graphStore string, req *PostGraphSt
 	return nil
 }
 
-// GetGraphStoreData decodes the public row model. Complex graph values stay strings.
+// GetGraphStoreData preserves JSON values; numbers use json.Number to retain integer precision.
 func (c *Client) GetGraphStoreData(project, graphStore string, req *GetGraphStoreDataRequest) (*GetGraphStoreDataResponse, error) {
 	if project == "" || req == nil || req.Query == "" || req.Start < 0 || req.Start > req.End {
 		return nil, NewClientError(fmt.Errorf("project, GraphStore query and 0 <= start <= end are required"))
@@ -156,8 +157,8 @@ func (c *Client) GetGraphStoreData(project, graphStore string, req *GetGraphStor
 func decodeGraphStoreQuery(body []byte) (*GetGraphStoreDataResponse, error) {
 	var value struct {
 		Data *struct {
-			Fields *[]string    `json:"fields"`
-			Values *[][]*string `json:"values"`
+			Fields *[]string        `json:"fields"`
+			Values *[][]interface{} `json:"values"`
 		} `json:"data"`
 		Meta *struct {
 			ElapsedMs *int64    `json:"elapsedMs"`
@@ -165,8 +166,14 @@ func decodeGraphStoreQuery(body []byte) (*GetGraphStoreDataResponse, error) {
 			Warnings  *[]string `json:"warnings"`
 		} `json:"meta"`
 	}
-	if err := json.Unmarshal(body, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		return nil, err
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("invalid trailing GraphStore query content: %v", err)
 	}
 	if value.Data == nil || value.Meta == nil || value.Data.Fields == nil || value.Data.Values == nil ||
 		value.Meta.ElapsedMs == nil || value.Meta.Truncated == nil || value.Meta.Warnings == nil {
