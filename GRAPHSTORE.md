@@ -127,7 +127,7 @@ parser retries. Service errors retain *sls.Error; mutations can have unknown res
 ACK does not promise query visibility/durability; retries may duplicate delivery. Callers own polling.
 
 SDK validation uses `go test .`, targeted race tests and `go build .`.
-All 13 operations stay on the existing interface. No dependency/module version change or release
+All 14 operations stay on the existing interface. No dependency/module version change or release
 is implied. The E2E bridge decodes fixture JSON into these typed models before calling the SDK.
 
 ## Runnable CRUD sample
@@ -170,3 +170,15 @@ READY/Schema 完成后，针对当前 stg 缓存收敛固定等待 65 秒再首�
 
 查询结果保留 JSON 原生类型：数字、布尔、数组、对象、null 和字符串；路径为数组，实体为对象。
 业务属性中的 JSON 文本仍是字符串，不递归解析。Go 的数字为 `json.Number`，可调用 `Int64()` 或 `Float64()`，避免大整数精度丢失。
+
+## BaseSchema update
+
+`UpdateGraphStoreBaseSchema` (Java: `updateGraphStoreBaseSchema`) sends
+`PUT /graphstore/{storeName}/baseschema` with a `GraphStoreBaseSchemaUpdate` under `value`.
+The model contains positive `ttlSeconds`, `indexEnable`, optional `fullTextIndex`, and
+`graphLayouts` containing one vertex and one edge `GraphStoreGraphLayoutUpdate`. Each
+layout has only `name` and a required `keyIndexConfigs` map. Use an empty map to clear
+explicit key index settings; false is preserved. In Go, use a non-nil empty map.
+This is complete replacement of mutable settings, without structural mutation or CAS.
+The service validates keys, reserved names, TTL and index combinations. Success has
+an empty body and does not promise immediate convergence or historical reindexing.

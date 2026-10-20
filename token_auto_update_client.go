@@ -138,6 +138,16 @@ func (c *TokenAutoUpdateClient) ListGraphStoreCollectionSchemas(project, graphSt
 	return
 }
 
+func (c *TokenAutoUpdateClient) UpdateGraphStoreBaseSchema(project, graphStore string, schema *GraphStoreBaseSchemaUpdate) (err error) {
+	for i := 0; i < c.maxTryTimes; i++ {
+		err = c.logClient.UpdateGraphStoreBaseSchema(project, graphStore, schema)
+		if !c.processError(err) {
+			return
+		}
+	}
+	return
+}
+
 func (c *TokenAutoUpdateClient) UpdateGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string, schema *GraphStoreCollectionSchemaUpdate) (err error) {
 	for i := 0; i < c.maxTryTimes; i++ {
 		err = c.logClient.UpdateGraphStoreCollectionSchema(project, graphStore, collectionSchemaName, schema)

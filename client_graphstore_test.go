@@ -86,6 +86,15 @@ func TestGraphStoreManagementRequests(t *testing.T) {
 					require.Equal(t, fmt.Sprintf(`{"splitHash":%d}`, *hash), string(requestBody))
 				}
 			}
+			require.NoError(t, client.UpdateGraphStoreBaseSchema("project", "store", &GraphStoreBaseSchemaUpdate{
+				TTLSeconds: math.MaxInt64, IndexEnable: false,
+				GraphLayouts: []GraphStoreGraphLayoutUpdate{
+					{Name: GraphStoreLayoutVertex, KeyIndexConfigs: map[string]GraphStoreIndexConfig{"id": {Enable: false}}},
+					{Name: GraphStoreLayoutEdge, KeyIndexConfigs: map[string]GraphStoreIndexConfig{}},
+				},
+			}))
+			check(http.MethodPut, "/graphstore/store/baseschema")
+			require.JSONEq(t, `{"value":{"ttlSeconds":9223372036854775807,"indexEnable":false,"graphLayouts":[{"name":"vertex","keyIndexConfigs":{"id":{"enable":false}}},{"name":"edge","keyIndexConfigs":{}}]}}`, string(requestBody))
 			require.NoError(t, client.CreateGraphStoreCollectionSchema("project", "store", graphStoreTestCollection("雪")))
 			check(http.MethodPost, "/graphstore/store/collectionschemas")
 			require.JSONEq(t, `{"value":{"name":"雪","description":"schema","graphLayout":"vertex","collectionKeyValues":[],"fields":[]}}`, string(requestBody))
@@ -160,6 +169,8 @@ func TestGraphStoreInputAndResponseValidation(t *testing.T) {
 		require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", name, graphStoreTestUpdate("aa")))
 		require.Error(t, client.DeleteGraphStoreCollectionSchema("project", "store", name))
 	}
+	require.Error(t, client.UpdateGraphStoreBaseSchema("project", "store", nil))
+	require.Error(t, client.UpdateGraphStoreBaseSchema("project", "../store", &GraphStoreBaseSchemaUpdate{}))
 	require.Error(t, client.CreateGraphStoreCollectionSchema("project", "store", nil))
 	require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", "aa", nil))
 	require.Error(t, client.UpdateGraphStoreCollectionSchema("project", "store", "aa", graphStoreTestUpdate("bb")))

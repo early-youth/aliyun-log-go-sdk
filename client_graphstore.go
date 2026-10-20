@@ -202,6 +202,20 @@ func (c *Client) GetGraphStoreBaseSchema(project, graphStore string) (*GetGraphS
 	return result, nil
 }
 
+func (c *Client) UpdateGraphStoreBaseSchema(project, graphStore string, schema *GraphStoreBaseSchemaUpdate) error {
+	uri, err := graphStorePath(graphStore)
+	if err != nil {
+		return err
+	}
+	if schema == nil {
+		return fmt.Errorf("baseSchema is required")
+	}
+	body := struct {
+		Value *GraphStoreBaseSchemaUpdate `json:"value"`
+	}{schema}
+	return c.graphStoreRequest(project, http.MethodPut, uri+"/baseschema", nil, body, nil)
+}
+
 func (c *Client) CreateGraphStoreCollectionSchema(project, graphStore string, schema *GraphStoreCollectionSchema) error {
 	uri, err := graphStorePath(graphStore)
 	if err != nil {

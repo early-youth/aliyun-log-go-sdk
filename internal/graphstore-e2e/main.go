@@ -128,6 +128,11 @@ func main() {
 		err = client.SplitGraphStoreShard(p.Project, p.StoreName, p.ShardID, p.SplitHash)
 	case "GetGraphStoreBaseSchema":
 		result, err = client.GetGraphStoreBaseSchema(p.Project, p.StoreName)
+	case "UpdateGraphStoreBaseSchema":
+		var schema sls.GraphStoreBaseSchemaUpdate
+		if err = json.Unmarshal(p.Body, &schema); err == nil {
+			err = client.UpdateGraphStoreBaseSchema(p.Project, p.StoreName, &schema)
+		}
 	case "CreateGraphStoreCollectionSchema":
 		var schema sls.GraphStoreCollectionSchema
 		if err = json.Unmarshal(p.Body, &schema); err == nil {

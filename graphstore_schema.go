@@ -193,6 +193,22 @@ func (s GraphStoreEdgeLayout) MarshalJSON() ([]byte, error) {
 	return json.Marshal(value)
 }
 
+// GraphStoreGraphLayoutUpdate replaces the explicit CK/PK index map for one existing layout.
+type GraphStoreGraphLayoutUpdate struct {
+	Name GraphStoreLayoutType `json:"name"`
+	// Required map; use an empty non-nil map to clear explicit key settings.
+	KeyIndexConfigs map[string]GraphStoreIndexConfig `json:"keyIndexConfigs"`
+}
+
+// GraphStoreBaseSchemaUpdate replaces mutable settings; key structure remains service owned.
+type GraphStoreBaseSchemaUpdate struct {
+	TTLSeconds    int64                    `json:"ttlSeconds"`
+	IndexEnable   bool                     `json:"indexEnable"`
+	FullTextIndex *GraphStoreFullTextIndex `json:"fullTextIndex,omitempty"`
+	// Required vertex and edge entries, including empty index maps.
+	GraphLayouts []GraphStoreGraphLayoutUpdate `json:"graphLayouts"`
+}
+
 // GraphStoreBaseSchema owns both layouts; the wire representation remains graphLayouts.
 type GraphStoreBaseSchema struct {
 	// Required time state setting.

@@ -87,6 +87,7 @@ type ClientInterface interface {
 	DeleteGraphStore(project, graphStore string) error
 	SplitGraphStoreShard(project, graphStore string, shardID int32, splitHash *uint64) error
 	GetGraphStoreBaseSchema(project, graphStore string) (*GetGraphStoreBaseSchemaResponse, error)
+	UpdateGraphStoreBaseSchema(project, graphStore string, schema *GraphStoreBaseSchemaUpdate) error
 	CreateGraphStoreCollectionSchema(project, graphStore string, schema *GraphStoreCollectionSchema) error
 	GetGraphStoreCollectionSchema(project, graphStore string, collectionSchemaName string) (*GetGraphStoreCollectionSchemaResponse, error)
 	ListGraphStoreCollectionSchemas(project, graphStore string, pageSize int, pageToken string) (*ListGraphStoreCollectionSchemasResponse, error)
