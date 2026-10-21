@@ -267,8 +267,21 @@ func realRequest(ctx context.Context, project *LogProject, method, uri string, h
 		if ioErr != nil {
 			return nil, NewBadResponseError(ioErr.Error(), resp.Header, resp.StatusCode)
 		}
-		if jErr := json.Unmarshal(buf, err); jErr != nil {
+		var body struct {
+			*Error
+			Status     string  `json:"status"`
+			QueryCode  *string `json:"error_code"`
+			QueryError *string `json:"error"`
+		}
+		body.Error = err
+		if jErr := json.Unmarshal(buf, &body); jErr != nil {
 			return nil, NewBadResponseError(string(buf), resp.Header, resp.StatusCode)
+		}
+		if body.Status == "error" {
+			if body.QueryCode == nil || body.QueryError == nil {
+				return nil, NewBadResponseError(string(buf), resp.Header, resp.StatusCode)
+			}
+			err.Code, err.Message = *body.QueryCode, *body.QueryError
 		}
 		err.RequestID = resp.Header.Get(RequestIDHeader)
 		return nil, err

@@ -205,17 +205,17 @@ func (s sample) writeAndQuery() error {
 	); err != nil {
 		return err
 	}
-	if err := s.waitForRows(personQuery, []string{"name", "age"}, [][]interface{}{{"Alice", json.Number("30")}, {"Bob", json.Number("28")}}); err != nil {
+	if err := s.waitForRows(personQuery, []string{"name", "age"}, [][]interface{}{{typedValue("String", "Alice"), typedValue("Integer", "30")}, {typedValue("String", "Bob"), typedValue("Integer", "28")}}); err != nil {
 		return err
 	}
-	if err := s.waitForRows(edgeQuery, []string{"source", "target"}, [][]interface{}{{"Alice", "Bob"}}); err != nil {
+	if err := s.waitForRows(edgeQuery, []string{"source", "target"}, [][]interface{}{{typedValue("String", "Alice"), typedValue("String", "Bob")}}); err != nil {
 		return err
 	}
 	// UPDATE 保留完整属性；DELETE 只需标识目标的键字段。
 	if err := s.write(event("vertex", "update", "vl", "person", "vid", aliceID, "name", "Alice", "age", "31")); err != nil {
 		return err
 	}
-	if err := s.waitForRows(personQuery, []string{"name", "age"}, [][]interface{}{{"Alice", json.Number("31")}, {"Bob", json.Number("28")}}); err != nil {
+	if err := s.waitForRows(personQuery, []string{"name", "age"}, [][]interface{}{{typedValue("String", "Alice"), typedValue("Integer", "31")}, {typedValue("String", "Bob"), typedValue("Integer", "28")}}); err != nil {
 		return err
 	}
 	if err := s.write(event("edge", "delete", "sl", "person", "sid", aliceID, "el", "knows", "tl", "person", "tid", bobID)); err != nil {
@@ -262,15 +262,21 @@ func (s sample) waitUntilReady() error {
 	return fmt.Errorf("timed out waiting for Store READY")
 }
 
+func typedValue(kind string, value interface{}) map[string]interface{} {
+	return map[string]interface{}{"$type": kind, "_value": value}
+}
+
 func (s sample) waitForRows(query string, fields []string, rows [][]interface{}) error {
-	// ACK 不保证立即可读。原生查询返回可空字符串，比较时区分 null、空串及实际值。
+	// ACK 不保证立即可读。比较完整 Typed cell，同时核对类型标签和值。
+	request := sls.NewGetGraphStoreDataRequest(query)
+	request.ResultFormat = "typed_json"
 	for deadline := time.Now().Add(waitTimeout); time.Now().Before(deadline); time.Sleep(time.Second) {
-		response, err := s.client.GetGraphStoreData(s.project, s.store, sls.NewGetGraphStoreDataRequest(query))
+		response, err := s.client.GetGraphStoreData(s.project, s.store, request)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("GetGraphStoreData: requestId=%s, rows=%d, truncated=%t\n", response.RequestID, len(response.Data.Values), response.Meta.Truncated)
-		if !response.Meta.Truncated && reflect.DeepEqual(response.Data.Fields, fields) && reflect.DeepEqual(response.Data.Values, rows) {
+		fmt.Printf("GetGraphStoreData: requestId=%s, rows=%d, status=%s\n", response.RequestID, len(response.Data.Values), response.Status)
+		if response.Status == "success" && reflect.DeepEqual(response.Data.Fields, fields) && reflect.DeepEqual(response.Data.Values, rows) {
 			values, _ := json.Marshal(response.Data.Values)
 			fmt.Printf("Query: %s\nRows: %s\n", query, values)
 			return nil

@@ -103,7 +103,7 @@ err := client.PostGraphStoreData(project, storeName, &sls.PostGraphStoreDataRequ
 rows, err := client.GetGraphStoreData(project, storeName, &sls.GetGraphStoreDataRequest{
     Query: "MATCH (n) RETURN n", Start: 1700000000, End: 1700001000, Session: "opaque",
 })
-// rows.Data.Fields, rows.Data.Values ([][]interface{}), rows.Meta and rows.RequestID.
+// rows.Data.Fields, rows.Data.Values ([][]interface{}), rows.Status, rows.Warnings, rows.Stats (nullable) and rows.RequestID.
 // nil is JSON null; numbers are json.Number; strings, booleans, maps and lists remain native. Handle err first.
 ```
 
@@ -116,8 +116,8 @@ and credential refresh. The retry timeout does not cancel an in-flight HTTP requ
 Query sends int64 closed [start,end], 0 <= start <= end. NewGetGraphStoreDataRequest defaults
 to [0,4294967295]; an explicit struct supports [0,0]. Session is optional and opaque.
 Management bodies decode through encoding/json into typed fields; query uses json.Decoder.UseNumber
-and rejects trailing input. Required
-outer/data/meta fields are checked; native type/overflow errors remain errors. Unknown result
+and rejects trailing input. It decodes directly into GetGraphStoreDataResponse; absent/null
+fields use native zero values. Native type/overflow errors remain errors. Unknown result
 members and unequal row widths are accepted. Native string decoding handles null string-list
 elements and invalid UTF-8; no extra UTF-8 pass or cell coercion is added. Responses support
 uncompressed/LZ4 through the existing decompressor. The raw-size header must fit int;
@@ -159,7 +159,7 @@ GRAPHSTORE_SIGNATURE_VERSION=v4 GRAPHSTORE_REGION=cn-wulanchabu-stg-pg2 go run .
 
 READY/Schema 完成后，针对当前 stg 缓存收敛固定等待 65 秒再首写；READY、查询读回和
 删除终态各轮询最多 120 秒，另加最后一次在途 SDK 调用耗时。
-五次读回严格比较列名、行值和 `truncated=false`，ACK 不代表已持久化或立即可查询。
+五次读回严格比较列名、行值和 `status=success`，ACK 不代表已持久化或立即可查询。
 示例不自行重放失败写入；原生 SDK 的 retry/credential refresh 行为保持不变，超时可能结果未知，
 原生重试也可能重复投递。
 
@@ -168,8 +168,23 @@ READY/Schema 完成后，针对当前 stg 缓存收敛固定等待 65 秒再首�
 `GraphStore sample passed; Store deletion confirmed.`，同时确认精确的 `404/GraphStoreNotExist`。
 管理和写入 API 原生只返回 error，查询成功响应提供 request ID；失败诊断不输出原始响应正文。
 
-查询结果保留 JSON 原生类型：数字、布尔、数组、对象、null 和字符串；路径为数组，实体为对象。
-业务属性中的 JSON 文本仍是字符串，不递归解析。Go 的数字为 `json.Number`，可调用 `Int64()` 或 `Float64()`，避免大整数精度丢失。
+查询请求可设置 `resultFormat`：`json` 返回原生 JSON 值，`typed_json` 返回带标签的值；
+省略时服务端默认 `json`。使用 `request.ResultFormat = "typed_json"` 显式选择 Typed；
+样例已显式选择 Typed。SDK 仅序列化参数，合法取值由 Front 校验，两种格式共用响应模型。
+Typed 模式原样保留每个值的 `$type/_value` 和嵌套结构。
+例如整数 42 是 `{"$type":"Integer","_value":"42"}`，字符串 42 使用 `String` 标签；
+Null 使用 `{"$type":"Null","_value":null}`。List、Map、Node、Relationship、Path 和 temporal
+沿用底层标签；未知标签同样透传，由消费者按显式类型读取，不根据文本或对象形状猜测。
+Go 保留 `UseNumber` 处理文档中的 JSON 数字；Typed Integer 的 `_value` 本身是字符串。
+
+Query models expose `status`, `warnings`, and `stats` with `rowCount/elapsedMs/peakMemoryBytes`.
+The SDK passes status strings through without enum or error-field combination checks. Missing/null
+fields use native defaults; stats may be null, empty or partial, and warnings may be null or empty. Statistics require session `stats_enable=true`
+and available execution statistics; absent stats stay absent. HTTP 200 with `incomplete` is partial
+and must not pass a caller's complete-result check. The old query Meta model is removed.
+Query HTTP errors carry `status=error`, `error_code` and `error`; the existing SDK error type
+retains the public code/message, HTTP status and request ID. Ordinary LogStore errors keep their
+existing format and retry behavior.
 
 ## BaseSchema update
 

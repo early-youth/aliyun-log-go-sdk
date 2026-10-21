@@ -20,10 +20,68 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const graphStoreRows = `{"data":{"fields":["a","b","node"],"values":[[null,"","{\"id\":\"雪\"}"],["x\u0000y","雪","s"]]},"meta":{"truncated":true,"elapsedMs":-9223372036854775808,"warnings":["","雪"]}}`
+const graphStoreRows = `{"data":{"fields":["a","b","node"],"values":[[null,"","{\"id\":\"雪\"}"],["x\u0000y","雪","s"]]},"status":"incomplete","stats":{"rowCount":2,"elapsedMs":-9223372036854775808,"peakMemoryBytes":18446744073709551615},"warnings":["","雪"]}`
+
+func TestGraphStoreQueryPreservesTypedJSON(t *testing.T) {
+	body := []byte(`{"status":"success","data":{"fields":["v"],"values":[[{"$type":"Integer","_value":"9223372036854775807"}],[{"$type":"Integer","_value":"-9223372036854775808"}],[{"$type":"Float","_value":"1.0"}],[{"$type":"String","_value":"1.0"}],[{"$type":"Float","_value":"NaN"}],[{"$type":"Boolean","_value":true}],[{"$type":"Null","_value":null}],[{"$type":"String","_value":""}],[{"$type":"String","_value":"雪\u0000tail"}],[{"$type":"List","_value":[{"$type":"Integer","_value":"9007199254740993"},{"$type":"Null","_value":null}]}],[{"$type":"Map","_value":{"$type":{"$type":"String","_value":"business"},"_value":{"$type":"String","_value":"[1,2]"}}}],[{"$type":"Node","_value":{"_element_id":"a","_labels":["N"],"_properties":{"n":{"$type":"Integer","_value":"9223372036854775807"}}}}],[{"$type":"Relationship","_value":{"_element_id":"r","_start_node_element_id":"a","_end_node_element_id":"b","_type":"R","_properties":{}}}],[{"$type":"Path","_value":[{"$type":"Node","_value":{"_element_id":"a","_labels":["N"],"_properties":{"n":{"$type":"Integer","_value":"9223372036854775807"}}}},{"$type":"Relationship","_value":{"_element_id":"r","_start_node_element_id":"a","_end_node_element_id":"b","_type":"R","_properties":{}}},{"$type":"Node","_value":{"_element_id":"b","_labels":[],"_properties":{}}}]}],[{"$type":"Date","_value":"2026-10-21"}],[{"$type":"Point","_value":"SRID=7203;POINT (1 2)"}],[{"$type":"FutureType","_value":{"opaque":[1,null]}}]]}}`)
+	for _, version := range []AuthVersionType{AuthV1, AuthV4} {
+		client := CreateNormalInterfaceV2("http://example.com", NewStaticCredentialsProvider("key", "secret", ""))
+		client.SetAuthVersion(version)
+		client.SetRegion("cn-test")
+		transport := testutil.NewMockTransport()
+		client.SetHTTPClient(&http.Client{Transport: transport})
+		transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+			return httpmock.NewStringResponse(200, string(body)), nil
+		})
+		request := NewGetGraphStoreDataRequest("RETURN n")
+		request.ResultFormat = "typed_json"
+		result, err := client.GetGraphStoreData("project", "store", request)
+		require.NoError(t, err)
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		require.JSONEq(t, string(body), string(encoded))
+		require.Equal(t, "9223372036854775807", result.Data.Values[0][0].(map[string]interface{})["_value"])
+		require.Equal(t, "雪\x00tail", result.Data.Values[8][0].(map[string]interface{})["_value"])
+	}
+}
+
+func TestGraphStoreQueryResultFormatWire(t *testing.T) {
+	for _, version := range []AuthVersionType{AuthV1, AuthV4} {
+		client := CreateNormalInterfaceV2("http://example.com", NewStaticCredentialsProvider("key", "secret", ""))
+		client.SetAuthVersion(version)
+		client.SetRegion("cn-test")
+		transport := testutil.NewMockTransport()
+		client.SetHTTPClient(&http.Client{Transport: transport})
+		for _, format := range []string{"", "json", "typed_json", "future-format"} {
+			transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+				var body map[string]interface{}
+				require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+				if format == "" {
+					require.NotContains(t, body, "resultFormat")
+				} else {
+					require.Equal(t, format, body["resultFormat"])
+				}
+				cell := `42`
+				if format == "typed_json" {
+					cell = `{"$type":"Integer","_value":"42"}`
+				}
+				return httpmock.NewStringResponse(200, `{"status":"success","data":{"fields":["n"],"values":[[`+cell+`]]}}`), nil
+			})
+			request := NewGetGraphStoreDataRequest("RETURN 42 AS n")
+			request.ResultFormat = format
+			response, err := client.GetGraphStoreData("project", "store", request)
+			require.NoError(t, err)
+			if format == "typed_json" {
+				require.Equal(t, map[string]interface{}{"$type": "Integer", "_value": "42"}, response.Data.Values[0][0])
+			} else {
+				require.Equal(t, json.Number("42"), response.Data.Values[0][0])
+			}
+		}
+	}
+}
 
 func TestGraphStoreQueryStructuredValues(t *testing.T) {
-	body := []byte(`{"data":{"fields":["v"],"values":[[9223372036854775807],[true],[[1,{"name":"雪","text":"[1,2]"}]],[{"labels":["person"],"properties":{"age":30}}],["123"],["true"],["[]"],[null],[""]]},"meta":{"truncated":false,"elapsedMs":1,"warnings":[]}}`)
+	body := []byte(`{"data":{"fields":["v"],"values":[[9223372036854775807],[true],[[1,{"name":"雪","text":"[1,2]"}]],[{"labels":["person"],"properties":{"age":30}}],["123"],["true"],["[]"],[null],[""]]},"status":"success"}`)
 	result, err := decodeGraphStoreQuery(body)
 	require.NoError(t, err)
 	require.Equal(t, json.Number("9223372036854775807"), result.Data.Values[0][0])
@@ -137,9 +195,10 @@ func TestGraphStoreDataWire(t *testing.T) {
 				require.Equal(t, "", result.Data.Values[0][1])
 				require.Equal(t, `{"id":"雪"}`, result.Data.Values[0][2])
 				require.Equal(t, "x\x00y", result.Data.Values[1][0])
-				require.Equal(t, int64(-9223372036854775808), result.Meta.ElapsedMs)
-				require.Equal(t, []string{"", "雪"}, result.Meta.Warnings)
-				require.True(t, result.Meta.Truncated)
+				require.Equal(t, int64(-9223372036854775808), result.Stats.ElapsedMs)
+				require.Equal(t, []string{"", "雪"}, result.Warnings)
+				require.Equal(t, "incomplete", result.Status)
+				require.Equal(t, uint64(18446744073709551615), result.Stats.PeakMemoryBytes)
 			})
 		}
 	}
@@ -231,12 +290,14 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 		require.Equal(t, before+1, transport.GetTotalCallCount())
 	}
 	query(true)
-	for _, body = range []string{"", "null", "[]", "{}", graphStoreRows + "{}", graphStoreRows + "\x00"} {
+	for _, body = range []string{"", "[]", graphStoreRows + "{}", graphStoreRows + "\x00"} {
 		query(false)
 	}
 	for _, replacement := range [][2]string{
 		{`"fields":["a","b","node"]`, `"fields":[1,"b","node"]`},
-		{`"truncated":true`, `"truncated":1`},
+		{`"status":"incomplete"`, `"status":1`},
+		{`"rowCount":2`, `"rowCount":-1`},
+		{`"peakMemoryBytes":18446744073709551615`, `"peakMemoryBytes":18446744073709551616`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":-9223372036854775809`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":1.5`},
 		{`"elapsedMs":-9223372036854775808`, `"elapsedMs":"1"`},
@@ -250,7 +311,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 		{`"fields":["a","b","node"]`, `"fields":[null,"b","node"]`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `null`},
 		{`[null,"","{\"id\":\"雪\"}"]`, `[]`},
-		{`"truncated":true`, `"rowCount":2,"truncated":true`},
+		{`"status":"incomplete"`, `"diagnostic":true,"status":"incomplete"`},
 		{`"warnings":["","雪"]`, `"warnings":[null]`},
 		{`"data":{`, `"diagnostic":{},"data":{"extra":1,`},
 	} {
@@ -260,7 +321,7 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 	}
 	body = strings.Replace(graphStoreRows, "雪", "\xff", 1)
 	query(true) // encoding/json replaces invalid UTF-8, as it does for LogStore.
-	for _, scope := range []string{"", "meta", "data"} {
+	for _, scope := range []string{"", "stats", "data"} {
 		var outer map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal([]byte(graphStoreRows), &outer))
 		fields := outer
@@ -281,12 +342,12 @@ func TestGraphStoreQueryResponses(t *testing.T) {
 				encoded, err := json.Marshal(outer)
 				require.NoError(t, err)
 				body = string(encoded)
-				query(false)
+				query(true)
 			}
 			fields[key] = original
 		}
 	}
-	body = `{"data":{"fields":[],"values":[]},"meta":{"truncated":false,"elapsedMs":0,"warnings":[]}}`
+	body = `{"data":{"fields":[],"values":[]},"status":"success"}`
 	query(true)
 	body = strings.Replace(body, `"values":[]`, `"values":[null]`, 1)
 	query(true)
@@ -334,7 +395,11 @@ func TestGraphStoreDataRetriesAndToken(t *testing.T) {
 				if calls > failCount {
 					return httpmock.NewStringResponse(200, graphStoreRows), nil
 				}
-				response := httpmock.NewStringResponse(status, `{"errorCode":"ServiceError","errorMessage":"failed"}`)
+				errorBody := `{"errorCode":"ServiceError","errorMessage":"failed"}`
+				if operation == "query" {
+					errorBody = `{"status":"error","error_code":"ServiceError","error":"failed"}`
+				}
+				response := httpmock.NewStringResponse(status, errorBody)
 				response.Header.Set(RequestIDHeader, "last-request")
 				return response, nil
 			})
@@ -350,6 +415,8 @@ func TestGraphStoreDataRetriesAndToken(t *testing.T) {
 				require.ErrorAs(t, invoke(client), &serviceError)
 				require.Equal(t, int32(status), serviceError.HTTPCode)
 				require.Equal(t, "last-request", serviceError.RequestID)
+				require.Equal(t, "ServiceError", serviceError.Code)
+				require.Equal(t, "failed", serviceError.Message)
 				require.Equal(t, 1, calls)
 			}
 			RetryOnServerErrorEnabled = false
@@ -386,4 +453,35 @@ func TestGraphStoreDataRetriesAndToken(t *testing.T) {
 			require.NoError(t, invoke(client)) // Native retryTimeout does not cancel an in-flight HTTP request.
 		})
 	}
+}
+
+func TestGraphStoreQueryOutcome(t *testing.T) {
+	for _, status := range []string{"success", "incomplete", "error", "unknown", ""} {
+		result, err := decodeGraphStoreQuery([]byte(`{"status":"` + status + `","error_code":"InvalidQuery","error":"detail"}`))
+		require.NoError(t, err)
+		require.Equal(t, status, result.Status)
+		require.Nil(t, result.Stats)
+		require.Nil(t, result.Warnings)
+		require.Nil(t, result.Data.Fields)
+		require.Nil(t, result.Data.Values)
+	}
+	for _, body := range []string{
+		`null`, `{}`, `{"data":null,"status":null,"stats":null,"warnings":null}`,
+		`{"data":{}}`, `{"data":{"fields":null,"values":null}}`,
+	} {
+		result, err := decodeGraphStoreQuery([]byte(body))
+		require.NoError(t, err, body)
+		require.Equal(t, &GetGraphStoreDataResponse{}, result, body)
+	}
+	for _, body := range []string{`{"stats":{}}`, `{"stats":{"rowCount":null,"elapsedMs":null,"peakMemoryBytes":null}}`} {
+		result, err := decodeGraphStoreQuery([]byte(body))
+		require.NoError(t, err)
+		require.Equal(t, &GraphStoreQueryStats{}, result.Stats)
+	}
+	result, err := decodeGraphStoreQuery([]byte(`{"stats":{"rowCount":7},"warnings":[],"data":{"fields":[],"values":[]}}`))
+	require.NoError(t, err)
+	require.Equal(t, &GraphStoreQueryStats{RowCount: 7}, result.Stats)
+	require.Equal(t, []string{}, result.Warnings)
+	require.Equal(t, []string{}, result.Data.Fields)
+	require.Equal(t, [][]interface{}{}, result.Data.Values)
 }

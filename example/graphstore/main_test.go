@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -36,6 +35,9 @@ func (c *sampleClient) PostGraphStoreData(_, _ string, req *sls.PostGraphStoreDa
 	return nil
 }
 func (c *sampleClient) GetGraphStoreData(_, _ string, req *sls.GetGraphStoreDataRequest) (*sls.GetGraphStoreDataResponse, error) {
+	if req.ResultFormat != "typed_json" {
+		panic("sample must explicitly request typed_json")
+	}
 	if req.Start != 0 || req.End != 4294967295 {
 		panic("query must use the full event-time range")
 	}
@@ -93,21 +95,23 @@ func TestDeleteRequiresExactAbsence(t *testing.T) {
 func TestReadbackRejectsMismatchAndTruncation(t *testing.T) {
 	stop := errors.New("stop polling")
 	for _, tc := range []struct {
-		name      string
-		fields    []string
-		rows      [][]interface{}
-		truncated bool
+		name   string
+		fields []string
+		rows   [][]interface{}
+		status string
 	}{
-		{"wrong fields", []string{"other"}, [][]interface{}{{""}}, false},
-		{"null differs from empty string", []string{"name"}, [][]interface{}{{nil}}, false},
-		{"wrong value", []string{"name"}, [][]interface{}{{"other"}}, false},
-		{"duplicate row", []string{"name"}, [][]interface{}{{""}, {""}}, false},
-		{"truncated", []string{"name"}, [][]interface{}{{""}}, true},
+		{"wrong fields", []string{"other"}, [][]interface{}{{typedValue("String", "")}}, "success"},
+		{"null differs from empty string", []string{"name"}, [][]interface{}{{typedValue("Null", nil)}}, "success"},
+		{"wrong value", []string{"name"}, [][]interface{}{{typedValue("String", "other")}}, "success"},
+		{"duplicate row", []string{"name"}, [][]interface{}{{typedValue("String", "")}, {typedValue("String", "")}}, "success"},
+		{"plain cell", []string{"name"}, [][]interface{}{{""}}, "success"},
+		{"wrong tag", []string{"name"}, [][]interface{}{{typedValue("Integer", "")}}, "success"},
+		{"truncated", []string{"name"}, [][]interface{}{{typedValue("String", "")}}, "incomplete"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &sampleClient{readErr: stop, queries: []*sls.GetGraphStoreDataResponse{{
-				Data: sls.GraphStoreQueryData{Fields: tc.fields, Values: tc.rows}, Meta: sls.GraphStoreQueryMeta{Truncated: tc.truncated}}}}
-			err := (sample{client: client}).waitForRows(personQuery, []string{"name"}, [][]interface{}{{""}})
+				Data: sls.GraphStoreQueryData{Fields: tc.fields, Values: tc.rows}, Status: tc.status}}}
+			err := (sample{client: client}).waitForRows(personQuery, []string{"name"}, [][]interface{}{{typedValue("String", "")}})
 			if err != stop {
 				t.Fatalf("accepted incorrect readback: %v", err)
 			}
@@ -118,13 +122,13 @@ func TestReadbackRejectsMismatchAndTruncation(t *testing.T) {
 func TestDataCRUD(t *testing.T) {
 	client := &sampleClient{}
 	for _, data := range []sls.GraphStoreQueryData{
-		{Fields: []string{"name", "age"}, Values: [][]interface{}{{"Alice", json.Number("30")}, {"Bob", json.Number("28")}}},
-		{Fields: []string{"source", "target"}, Values: [][]interface{}{{"Alice", "Bob"}}},
-		{Fields: []string{"name", "age"}, Values: [][]interface{}{{"Alice", json.Number("31")}, {"Bob", json.Number("28")}}},
+		{Fields: []string{"name", "age"}, Values: [][]interface{}{{typedValue("String", "Alice"), typedValue("Integer", "30")}, {typedValue("String", "Bob"), typedValue("Integer", "28")}}},
+		{Fields: []string{"source", "target"}, Values: [][]interface{}{{typedValue("String", "Alice"), typedValue("String", "Bob")}}},
+		{Fields: []string{"name", "age"}, Values: [][]interface{}{{typedValue("String", "Alice"), typedValue("Integer", "31")}, {typedValue("String", "Bob"), typedValue("Integer", "28")}}},
 		{Fields: []string{"source", "target"}, Values: [][]interface{}{}},
 		{Fields: []string{"name", "age"}, Values: [][]interface{}{}},
 	} {
-		client.queries = append(client.queries, &sls.GetGraphStoreDataResponse{Data: data})
+		client.queries = append(client.queries, &sls.GetGraphStoreDataResponse{Data: data, Status: "success"})
 	}
 	if err := (sample{client: client}).writeAndQuery(); err != nil {
 		t.Fatal(err)

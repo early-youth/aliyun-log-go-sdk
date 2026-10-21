@@ -19,10 +19,11 @@ type PostGraphStoreDataRequest struct {
 }
 
 type GetGraphStoreDataRequest struct {
-	Query   string `json:"query"`
-	Start   int64  `json:"start"`
-	End     int64  `json:"end"`
-	Session string `json:"session,omitempty"`
+	Query        string `json:"query"`
+	Start        int64  `json:"start"`
+	End          int64  `json:"end"`
+	Session      string `json:"session,omitempty"`
+	ResultFormat string `json:"resultFormat,omitempty"`
 }
 
 // NewGetGraphStoreDataRequest defaults to the full event-time range.
@@ -30,10 +31,10 @@ func NewGetGraphStoreDataRequest(query string) *GetGraphStoreDataRequest {
 	return &GetGraphStoreDataRequest{Query: query, End: 4294967295}
 }
 
-type GraphStoreQueryMeta struct {
-	ElapsedMs int64    `json:"elapsedMs"`
-	Truncated bool     `json:"truncated"`
-	Warnings  []string `json:"warnings"`
+type GraphStoreQueryStats struct {
+	RowCount        uint64 `json:"rowCount"`
+	ElapsedMs       int64  `json:"elapsedMs"`
+	PeakMemoryBytes uint64 `json:"peakMemoryBytes"`
 }
 
 type GraphStoreQueryData struct {
@@ -42,9 +43,11 @@ type GraphStoreQueryData struct {
 }
 
 type GetGraphStoreDataResponse struct {
-	RequestID string              `json:"-"`
-	Data      GraphStoreQueryData `json:"data"`
-	Meta      GraphStoreQueryMeta `json:"meta"`
+	RequestID string                `json:"-"`
+	Data      GraphStoreQueryData   `json:"data"`
+	Status    string                `json:"status"`
+	Warnings  []string              `json:"warnings,omitempty"`
+	Stats     *GraphStoreQueryStats `json:"stats,omitempty"`
 }
 
 // PostGraphStoreData submits a LogGroup using the existing LogStore retry policy.
@@ -155,32 +158,15 @@ func (c *Client) GetGraphStoreData(project, graphStore string, req *GetGraphStor
 }
 
 func decodeGraphStoreQuery(body []byte) (*GetGraphStoreDataResponse, error) {
-	var value struct {
-		Data *struct {
-			Fields *[]string        `json:"fields"`
-			Values *[][]interface{} `json:"values"`
-		} `json:"data"`
-		Meta *struct {
-			ElapsedMs *int64    `json:"elapsedMs"`
-			Truncated *bool     `json:"truncated"`
-			Warnings  *[]string `json:"warnings"`
-		} `json:"meta"`
-	}
+	var result GetGraphStoreDataResponse
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
+	if err := decoder.Decode(&result); err != nil {
 		return nil, err
 	}
 	var trailing interface{}
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, fmt.Errorf("invalid trailing GraphStore query content: %v", err)
 	}
-	if value.Data == nil || value.Meta == nil || value.Data.Fields == nil || value.Data.Values == nil ||
-		value.Meta.ElapsedMs == nil || value.Meta.Truncated == nil || value.Meta.Warnings == nil {
-		return nil, fmt.Errorf("missing or null GraphStore query field")
-	}
-	return &GetGraphStoreDataResponse{
-		Data: GraphStoreQueryData{Fields: *value.Data.Fields, Values: *value.Data.Values},
-		Meta: GraphStoreQueryMeta{ElapsedMs: *value.Meta.ElapsedMs, Truncated: *value.Meta.Truncated, Warnings: *value.Meta.Warnings},
-	}, nil
+	return &result, nil
 }

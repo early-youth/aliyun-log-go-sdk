@@ -41,6 +41,7 @@ type invocation struct {
 	Start                *int64          `json:"start"`
 	End                  *int64          `json:"end"`
 	Session              string          `json:"session"`
+	ResultFormat         string          `json:"result_format"`
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -105,12 +106,15 @@ func main() {
 			panic("GraphStore query requires start and end")
 		}
 		var rows *sls.GetGraphStoreDataResponse
-		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, Start: *p.Start, End: *p.End, Session: p.Session})
+		rows, err = client.GetGraphStoreData(p.Project, p.StoreName, &sls.GetGraphStoreDataRequest{Query: p.Query, Start: *p.Start, End: *p.End, Session: p.Session, ResultFormat: p.ResultFormat})
 		if err == nil {
 			output["request_id"], output["header"], output["data"] = rows.RequestID, rows.Data.Fields, rows.Data.Values
-			output["meta"] = map[string]interface{}{
-				"row_count": len(rows.Data.Values), "truncated": rows.Meta.Truncated,
-				"elapsed_ms": rows.Meta.ElapsedMs, "warnings": rows.Meta.Warnings,
+			output["status"] = rows.Status
+			if len(rows.Warnings) != 0 {
+				output["warnings"] = rows.Warnings
+			}
+			if rows.Stats != nil {
+				output["stats"] = rows.Stats
 			}
 		}
 	case "CreateGraphStore":
