@@ -1,6 +1,6 @@
 //go:build e2e
 
-// A single-operation bridge for the GraphStore E2E Runner. No scenario or retry logic.
+// Native SDK bridge. Scenario, rate limits and cleanup belong to the E2E Runner.
 package main
 
 import (
@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -51,10 +52,20 @@ func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, erro
 }
 
 func main() {
-	var p invocation
+	stream := len(os.Args) == 2 && os.Args[1] == "--stream"
+	if len(os.Args) > 1 && !stream {
+		panic("unsupported bridge argument")
+	}
+	run(stream)
+}
+
+func run(stream bool) {
 	decoder := json.NewDecoder(os.Stdin)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&p); err != nil {
+	var p invocation
+	if err := decoder.Decode(&p); stream && err == io.EOF {
+		return
+	} else if err != nil {
 		panic(err)
 	}
 	key, secret := os.Getenv("GRAPHSTORE_E2E_ACCESS_KEY_ID"), os.Getenv("GRAPHSTORE_E2E_ACCESS_KEY_SECRET")
@@ -75,11 +86,46 @@ func main() {
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}}
+
 	defer transport.CloseIdleConnections()
+	first := p
+	encoder := json.NewEncoder(os.Stdout)
+	for {
+		if p.TimeoutMS <= 0 || p.Endpoint != first.Endpoint || p.DialAddress != first.DialAddress ||
+			p.SignatureVersion != first.SignatureVersion || p.Region != first.Region || p.BadCredentials != first.BadCredentials {
+			panic("stream SDK configuration cannot change")
+		}
+		started := time.Now()
+		output, attempts := invoke(p, client, transport)
+		if !stream && output["error_code"] == "SDK_TRANSPORT_ERROR" {
+			os.Exit(2)
+		}
+		if stream {
+			output["elapsed_us"] = time.Since(started).Microseconds()
+			output["http_attempts"] = attempts
+		}
+		if err := encoder.Encode(output); err != nil {
+			panic(err)
+		}
+		if !stream {
+			return
+		}
+		p = invocation{}
+		if err := decoder.Decode(&p); err == io.EOF {
+			return
+		} else if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func invoke(p invocation, client sls.ClientInterface, transport *http.Transport) (map[string]interface{}, int) {
 	requestStarted := false
+	attempts := 0
 	responseStatus, responseRequestID := 0, ""
 	client.SetHTTPClient(&http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		requestStarted = true
+		attempts++
 		response, err := transport.RoundTrip(request)
 		if response != nil {
 			responseStatus, responseRequestID = response.StatusCode, response.Header.Get(sls.RequestIDHeader)
@@ -175,10 +221,10 @@ func main() {
 			output["error_message"] = err.Error()
 		} else {
 			fmt.Fprintln(os.Stderr, "SDK transport/decode error:", err)
-			os.Exit(2)
+			output["http_status"], output["request_id"] = 0, ""
+			output["error_code"] = "SDK_TRANSPORT_ERROR"
+			output["error_message"] = "SDK transport or decode failure; result may be unknown"
 		}
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
-		panic(err)
-	}
+	return output, attempts
 }
