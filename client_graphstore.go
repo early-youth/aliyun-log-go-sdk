@@ -17,6 +17,12 @@ type CreateGraphStoreRequest struct {
 	BaseSchema GraphStoreBaseSchema `json:"baseSchema"`
 }
 
+func (r CreateGraphStoreRequest) MarshalJSON() ([]byte, error) {
+	type plain CreateGraphStoreRequest
+	r.BaseSchema.Version = 0
+	return json.Marshal(plain(r))
+}
+
 type ListGraphStoresRequest struct {
 	Offset *int
 	Size   *int

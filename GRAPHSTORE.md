@@ -208,3 +208,6 @@ including the existing per-code public message for HTTP 500. Local/network error
 
 Read `response.Meta` or `serviceError.Meta` (`json.RawMessage`); use `json.Decoder.UseNumber()` when decoding it into generic Go values.
 `Error.Meta` is excluded from JSON serialization and `String()`/`Error()` to preserve the existing error text; read the public field explicitly. The E2E bridge explicitly includes it when present.
+
+BaseSchema `version` is read-only and assigned by Master (currently 1). Read responses and generic
+Schema JSON retain it; CreateGraphStore serialization omits it, and BaseSchema updates cannot set it.

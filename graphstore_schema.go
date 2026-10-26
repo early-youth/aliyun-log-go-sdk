@@ -211,6 +211,8 @@ type GraphStoreBaseSchemaUpdate struct {
 
 // GraphStoreBaseSchema owns both layouts; the wire representation remains graphLayouts.
 type GraphStoreBaseSchema struct {
+	// Read-only Store version assigned by Master; omitted from create requests.
+	Version uint32 `json:"version,omitempty"`
 	// Required time state setting.
 	TimeStateEnable bool `json:"timeStateEnable"`
 	// Required positive seconds; validated by the service.

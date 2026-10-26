@@ -99,3 +99,16 @@ func TestGraphStoreSchemaNativeDefaults(t *testing.T) {
 		require.Empty(t, schema.CollectionSchema.Name)
 	}
 }
+
+func TestGraphStoreVersionIsReadOnly(t *testing.T) {
+	var base GraphStoreBaseSchema
+	require.NoError(t, json.Unmarshal([]byte(`{"version":1}`), &base))
+	require.Equal(t, uint32(1), base.Version)
+	require.Contains(t, graphStoreTestJSON(t, base), `"version":1`)
+	request := CreateGraphStoreRequest{StoreName: "s", ShardCount: 2, BaseSchema: base}
+	require.NotContains(t, graphStoreTestJSON(t, request), `"version"`)
+	require.Equal(t, uint32(1), request.BaseSchema.Version)
+	for _, value := range []string{`-1`, `4294967296`, `1.5`, `"1"`} {
+		require.Error(t, json.Unmarshal([]byte(`{"version":`+value+`}`), &GraphStoreBaseSchema{}))
+	}
+}
