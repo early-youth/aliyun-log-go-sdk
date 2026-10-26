@@ -276,6 +276,9 @@ func (s sample) waitForRows(query string, fields []string, rows [][]interface{})
 			return err
 		}
 		fmt.Printf("GetGraphStoreData: requestId=%s, rows=%d, status=%s\n", response.RequestID, len(response.Data.Values), response.Status)
+		if len(response.Meta) != 0 {
+			fmt.Printf("Meta: %s\n", response.Meta)
+		}
 		if response.Status == "success" && reflect.DeepEqual(response.Data.Fields, fields) && reflect.DeepEqual(response.Data.Values, rows) {
 			values, _ := json.Marshal(response.Data.Values)
 			fmt.Printf("Query: %s\nRows: %s\n", query, values)

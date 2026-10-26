@@ -197,3 +197,14 @@ explicit key index settings; false is preserved. In Go, use a non-nil empty map.
 This is complete replacement of mutable settings, without structural mutation or CAS.
 The service validates keys, reserved names, TTL and index combinations. Success has
 an empty body and does not promise immediate convergence or historical reindexing.
+
+## Optional query metadata
+
+Success and incomplete responses expose the optional generic JSON `meta` object; query service errors
+expose it on the existing native error. Unknown nested members, nulls and exact integers are retained.
+Missing/null metadata decodes to nil; an explicit `{}` remains present. Non-object metadata is rejected through the existing response decode error path.
+Typed JSON applies only to cells, not meta. The SDK keeps Front's final error code and message,
+including the existing per-code public message for HTTP 500. Local/network errors do not invent meta.
+
+Read `response.Meta` or `serviceError.Meta` (`json.RawMessage`); use `json.Decoder.UseNumber()` when decoding it into generic Go values.
+`Error.Meta` is excluded from JSON serialization and `String()`/`Error()` to preserve the existing error text; read the public field explicitly. The E2E bridge explicitly includes it when present.

@@ -485,3 +485,146 @@ func TestGraphStoreQueryOutcome(t *testing.T) {
 	require.Equal(t, []string{}, result.Data.Fields)
 	require.Equal(t, [][]interface{}{}, result.Data.Values)
 }
+
+func TestGraphStoreQueryMeta(t *testing.T) {
+	oldRetry := RetryOnServerErrorEnabled
+	RetryOnServerErrorEnabled = false
+	defer func() { RetryOnServerErrorEnabled = oldRetry }()
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, meta := range []string{"", "null", "{}", `{"requestId":"worker","durationMs":0,"extra":{"text":"雪\u0000tail","n":18446744073709551615,"nested":[null,true,{"error":"original"}]}}`} {
+		for _, status := range []int{200, 400, 500} {
+			for _, format := range []string{"json", "typed_json"} {
+				for _, compressed := range []bool{false, true} {
+					if status != 200 && compressed {
+						continue
+					}
+					for _, outcome := range []string{"success", "incomplete"} {
+						body := `{"status":"` + outcome + `","data":{"fields":[],"values":[]}`
+						if status != 200 {
+							body = `{"status":"error","error_code":"InternalServerError","error":"Public message unchanged"`
+						}
+						if meta != "" {
+							body += `,"meta":` + meta
+						}
+						body += "}"
+						rawSize := len(body)
+						if compressed {
+							out := make([]byte, lz4.CompressBlockBound(len(body)))
+							n, err := lz4.CompressBlock([]byte(body), out, nil)
+							require.NoError(t, err)
+							if n == 0 {
+								n, _ = copyIncompressible([]byte(body), out)
+							}
+							body = string(out[:n])
+						}
+						transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+							r := httpmock.NewStringResponse(status, body)
+							r.Header.Set(RequestIDHeader, "http-request")
+							if compressed {
+								r.Header.Set("x-log-compresstype", "lz4")
+								r.Header.Set(HTTPHeaderBodyRawSize, strconv.Itoa(rawSize))
+							}
+							return r, nil
+						})
+						req := NewGetGraphStoreDataRequest("RETURN 1")
+						req.ResultFormat = format
+						result, err := client.GetGraphStoreData("project", "store", req)
+						if status == 200 {
+							require.NoError(t, err)
+							if meta == "" || meta == "null" {
+								require.Nil(t, result.Meta)
+							} else {
+								require.Equal(t, meta, string(result.Meta))
+							}
+							encoded, encodeErr := json.Marshal(result)
+							require.NoError(t, encodeErr)
+							var fields map[string]json.RawMessage
+							require.NoError(t, json.Unmarshal(encoded, &fields))
+							_, present := fields["meta"]
+							require.Equal(t, meta != "" && meta != "null", present)
+							require.Equal(t, outcome, result.Status)
+						} else {
+							var serviceError *Error
+							require.ErrorAs(t, err, &serviceError)
+							if meta == "" || meta == "null" {
+								require.Nil(t, serviceError.Meta)
+							} else {
+								require.Equal(t, meta, string(serviceError.Meta))
+							}
+							require.Equal(t, "Public message unchanged", serviceError.Message)
+							require.Equal(t, int32(status), serviceError.HTTPCode)
+							require.Equal(t, "http-request", serviceError.RequestID)
+						}
+					}
+				}
+			}
+		}
+	}
+	transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+		return httpmock.NewStringResponse(400, `{"errorCode":"ParameterInvalid","errorMessage":"logstore error","meta":{"ignored":true}}`), nil
+	})
+	_, err := client.GetGraphStoreData("project", "store", NewGetGraphStoreDataRequest("RETURN 1"))
+	var serviceError *Error
+	require.ErrorAs(t, err, &serviceError)
+	require.Empty(t, serviceError.Meta)
+	require.Equal(t, "logstore error", serviceError.Message)
+}
+
+func TestGraphStoreQueryRejectsNonObjectMeta(t *testing.T) {
+	oldRetry := RetryOnServerErrorEnabled
+	RetryOnServerErrorEnabled = false
+	defer func() { RetryOnServerErrorEnabled = oldRetry }()
+	client := CreateNormalInterface("example.com", "key", "secret", "")
+	transport := testutil.NewMockTransport()
+	client.SetHTTPClient(&http.Client{Transport: transport})
+	for _, meta := range []string{"[]", "42", "true", `"text"`} {
+		for _, status := range []int{200, 400, 500} {
+			body := `{"status":"success","data":{"fields":[],"values":[]},"meta":` + meta + `}`
+			if status != 200 {
+				body = `{"status":"error","error_code":"InternalServerError","error":"public","meta":` + meta + `}`
+			}
+			transport.RegisterNoResponder(func(req *http.Request) (*http.Response, error) {
+				response := httpmock.NewStringResponse(status, body)
+				response.Header.Set(RequestIDHeader, "invalid-meta")
+				return response, nil
+			})
+			result, err := client.GetGraphStoreData("project", "store", NewGetGraphStoreDataRequest("RETURN 1"))
+			require.Nil(t, result)
+			var badResponse *BadResponseError
+			if status == 200 {
+				require.ErrorAs(t, err, &badResponse)
+			} else {
+				// The data API retains its existing ClientError wrapping of request decode errors.
+				var clientError *Error
+				require.ErrorAs(t, err, &clientError)
+				require.Equal(t, "ClientError", clientError.Code)
+				require.Nil(t, clientError.Meta)
+				require.NoError(t, json.Unmarshal([]byte(clientError.Message), &badResponse))
+			}
+			require.Equal(t, status, badResponse.HTTPCode)
+			require.Equal(t, "invalid-meta", http.Header(badResponse.RespHeader).Get(RequestIDHeader))
+			require.Equal(t, body, badResponse.RespBody)
+			require.Contains(t, badResponse.ErrorMessage, "meta must be an object")
+		}
+	}
+}
+
+func TestGraphStoreQueryErrorStringKeepsLegacyFields(t *testing.T) {
+	expected := `{
+    "httpCode": 400,
+    "errorCode": "InvalidQuery",
+    "errorMessage": "public",
+    "requestID": "request"
+}`
+	for _, meta := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage(`{"extra":"diagnostic"}`)} {
+		serviceError := Error{HTTPCode: 400, Code: "InvalidQuery", Message: "public", RequestID: "request", Meta: meta}
+		require.Equal(t, expected, serviceError.Error())
+		require.Equal(t, expected, serviceError.String())
+		encoded, err := json.Marshal(serviceError)
+		require.NoError(t, err)
+		require.JSONEq(t, expected, string(encoded))
+		require.Equal(t, meta, serviceError.Meta)
+	}
+}

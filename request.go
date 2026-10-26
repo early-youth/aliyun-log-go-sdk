@@ -269,9 +269,10 @@ func realRequest(ctx context.Context, project *LogProject, method, uri string, h
 		}
 		var body struct {
 			*Error
-			Status     string  `json:"status"`
-			QueryCode  *string `json:"error_code"`
-			QueryError *string `json:"error"`
+			Meta       json.RawMessage `json:"meta"`
+			Status     string          `json:"status"`
+			QueryCode  *string         `json:"error_code"`
+			QueryError *string         `json:"error"`
 		}
 		body.Error = err
 		if jErr := json.Unmarshal(buf, &body); jErr != nil {
@@ -282,6 +283,11 @@ func realRequest(ctx context.Context, project *LogProject, method, uri string, h
 				return nil, NewBadResponseError(string(buf), resp.Header, resp.StatusCode)
 			}
 			err.Code, err.Message = *body.QueryCode, *body.QueryError
+			meta, metaErr := normalizeGraphStoreQueryMeta(body.Meta)
+			if metaErr != nil {
+				return nil, newBadResponseError(string(buf), resp.Header, resp.StatusCode, metaErr)
+			}
+			err.Meta = meta
 		}
 		err.RequestID = resp.Header.Get(RequestIDHeader)
 		return nil, err

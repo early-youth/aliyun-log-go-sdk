@@ -43,6 +43,7 @@ type GraphStoreQueryData struct {
 }
 
 type GetGraphStoreDataResponse struct {
+	Meta      json.RawMessage       `json:"meta,omitempty"`
 	RequestID string                `json:"-"`
 	Data      GraphStoreQueryData   `json:"data"`
 	Status    string                `json:"status"`
@@ -168,5 +169,22 @@ func decodeGraphStoreQuery(body []byte) (*GetGraphStoreDataResponse, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, fmt.Errorf("invalid trailing GraphStore query content: %v", err)
 	}
+	meta, err := normalizeGraphStoreQueryMeta(result.Meta)
+	if err != nil {
+		return nil, err
+	}
+	result.Meta = meta
 	return &result, nil
+}
+
+func normalizeGraphStoreQueryMeta(meta json.RawMessage) (json.RawMessage, error) {
+	value := bytes.TrimSpace(meta)
+	if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+		return nil, nil
+	}
+	// The enclosing JSON decoder has already checked syntax; preserve the object's original bytes.
+	if value[0] != '{' {
+		return nil, fmt.Errorf("GraphStore query meta must be an object")
+	}
+	return meta, nil
 }

@@ -52,10 +52,11 @@ const (
 
 // Error defines sls error
 type Error struct {
-	HTTPCode  int32  `json:"httpCode"`
-	Code      string `json:"errorCode"`
-	Message   string `json:"errorMessage"`
-	RequestID string `json:"requestID"`
+	HTTPCode  int32           `json:"httpCode"`
+	Code      string          `json:"errorCode"`
+	Message   string          `json:"errorMessage"`
+	RequestID string          `json:"requestID"`
+	Meta      json.RawMessage `json:"-"`
 }
 
 func IsDebugLevelMatched(level int) bool {

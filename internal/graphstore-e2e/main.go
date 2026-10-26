@@ -156,6 +156,9 @@ func invoke(p invocation, client sls.ClientInterface, transport *http.Transport)
 		if err == nil {
 			output["request_id"], output["header"], output["data"] = rows.RequestID, rows.Data.Fields, rows.Data.Values
 			output["status"] = rows.Status
+			if len(rows.Meta) != 0 {
+				output["meta"] = rows.Meta
+			}
 			if len(rows.Warnings) != 0 {
 				output["warnings"] = rows.Warnings
 			}
@@ -215,6 +218,9 @@ func invoke(p invocation, client sls.ClientInterface, transport *http.Transport)
 			output["request_id"] = serviceError.RequestID
 			output["error_code"] = serviceError.Code
 			output["error_message"] = serviceError.Message
+			if len(serviceError.Meta) != 0 {
+				output["meta"] = serviceError.Meta
+			}
 		} else if !requestStarted {
 			output["http_status"], output["request_id"] = 0, ""
 			output["local_error"], output["error_code"] = true, "SDK_LOCAL_ERROR"
